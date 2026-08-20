@@ -1,0 +1,12 @@
+schemaVersion: 1
+description: AMD ROCm PyTorch on MI325X with SSH and JupyterLab.
+image: featherlesscloud/rocm-pytorch
+cpuCores: 8
+memoryGiB: 64
+startupCommand: ""
+environment: []
+bootstrapVersion: "1"
+versions:
+  - name: PyTorch (ROCm) 2.12.0
+    tag: rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0
+    rocmVersion: "7.14"
