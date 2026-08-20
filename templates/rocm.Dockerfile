@@ -19,6 +19,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     ENABLE_SSH=true \
     ENABLE_JUPYTER=false \
     REQUIRE_MI325X=true \
+    SSH_USERS_FILE= \
+    SSH_AUTHORIZED_KEYS_DIR= \
+    SSH_LOGIN_GROUP=featherless-ssh \
     JUPYTER_ROOT_DIR=/workspace \
     PATH=/usr/local/bin:${PATH}
 

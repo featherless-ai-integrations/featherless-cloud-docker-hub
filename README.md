@@ -83,6 +83,9 @@ on port 8888, set `ENABLE_JUPYTER=true`; persisted notebooks live in the
 | `SSH_PORT` | `22` | SSH port inside the container |
 | `SSH_PUBLIC_KEY` | empty | Public key installed for `CLOUD_USER` |
 | `SSH_PASSWORD` | empty | Enables password login when non-empty |
+| `SSH_USERS_FILE` | empty | Enables file-based multi-user SSH provisioning |
+| `SSH_AUTHORIZED_KEYS_DIR` | empty | Directory containing one public-key file per user |
+| `SSH_LOGIN_GROUP` | `featherless-ssh` | Login allowlist group in file-based mode |
 | `ENABLE_JUPYTER` | `false` | Start JupyterLab |
 | `REQUIRE_MI325X` | `true` | Require `/dev/kfd` and verify MI325X with `rocm-smi` |
 | `JUPYTER_PORT` | `8888` | Jupyter port inside the container |
@@ -104,6 +107,39 @@ command. Passing any other command replaces the launcher:
 docker run --rm -it --device=/dev/kfd --device=/dev/dri \
   ghcr.io/featherless-ai/rocm-pytorch:edge bash
 ```
+
+### File-based SSH accounts
+
+Setting `SSH_USERS_FILE` switches SSH from the single `CLOUD_USER` mode to
+file-based multi-user provisioning. The users file has one entry per line:
+
+```text
+# username:uid:gid:shell
+alice:10001:10001:/bin/bash
+bob:10002:10002:/bin/bash
+```
+
+For each account, provide a public-key file named exactly after the username:
+
+```text
+/etc/featherless/ssh/authorized_keys/alice
+/etc/featherless/ssh/authorized_keys/bob
+```
+
+Run with both inputs mounted read-only:
+
+```bash
+docker run --rm \
+  -e SSH_USERS_FILE=/etc/featherless/ssh/users.conf \
+  -e SSH_AUTHORIZED_KEYS_DIR=/etc/featherless/ssh/authorized_keys \
+  -v ./ssh/users.conf:/etc/featherless/ssh/users.conf:ro \
+  -v ./ssh/authorized_keys:/etc/featherless/ssh/authorized_keys:ro \
+  IMAGE
+```
+
+In this mode password authentication is always disabled, accounts are restricted
+through `AllowGroups featherless-ssh`, and `SSH_PASSWORD` is rejected. Internal
+private keys remain on SSH Piper; these mounted files contain public keys only.
 
 The MI325X guard runs for `serve`, not for arbitrary commands, so images can be
 inspected in CI without a GPU. Set `REQUIRE_MI325X=false` only for CPU-side smoke

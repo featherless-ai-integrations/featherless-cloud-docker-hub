@@ -18,6 +18,9 @@ services:
     environment:
       SSH_PUBLIC_KEY: ${SSH_PUBLIC_KEY:-}
       SSH_PASSWORD: ${SSH_PASSWORD:-}
+      SSH_USERS_FILE: ${SSH_USERS_FILE:-}
+      SSH_AUTHORIZED_KEYS_DIR: ${SSH_AUTHORIZED_KEYS_DIR:-}
+      SSH_LOGIN_GROUP: ${SSH_LOGIN_GROUP:-featherless-ssh}
       JUPYTER_TOKEN: ${JUPYTER_TOKEN:-}
       ENABLE_SSH: ${ENABLE_SSH:-true}
       ENABLE_JUPYTER: ${ENABLE_JUPYTER:-false}
