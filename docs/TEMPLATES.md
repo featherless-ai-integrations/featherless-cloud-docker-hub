@@ -1,7 +1,7 @@
 # Template manifests
 
-Each image collection owns a `template.yaml` manifest. An `icon.svg` tile
-may sit next to it and is picked up automatically. Featherless GPU Cloud
+Each image collection owns a `template.yaml` manifest. An SVG or PNG icon
+may sit next to it and is imported with the manifest. Featherless GPU Cloud
 discovers every `template.yaml` in this repository and imports it through
 the admin console's **Import from repo** action, so the published Docker
 Hub tags become customer-facing template cards without any manual digest
@@ -15,7 +15,7 @@ authoring reference. Keep the two in sync.
 ```
 rocm-pytorch/
   Dockerfile
-  icon.svg        # optional 64×64 tile shown on the catalog card and admin list
+  icon.svg        # optional brand mark shown on the catalog card and admin list
   template.yaml   # one entry per published image tag
 ```
 
@@ -31,9 +31,8 @@ and the icon.
 | `schemaVersion` | integer | Yes | Must be `1`. The API rejects any other value. |
 | `name` | string | Yes | 1–160 characters, **unique across every file**. The app name (e.g. `PyTorch (ROCm)`) — it is the card title prefix. Include `(ROCm)` to disambiguate from future CUDA builds. |
 | `image` | string | Yes | Docker Hub repository only (e.g. `featherlesscloud/rocm-pytorch`). No tag, no digest. The file's identity; imports match existing templates by this value. |
+| `icon` | string | No | Sibling SVG or PNG asset. Defaults to `icon.svg`. Icons retain their aspect ratio. |
 | `description` | string | No | Shared by every entry of this file. |
-| `cpuCores` | integer | No | 1–256. Default `8`. |
-| `memoryGiB` | integer | No | 1–2048. Default `64`. |
 | `startupCommand` | string | No | Default `""`, which runs the image entrypoint `featherless-init run`. |
 | `environment` | list of `{name, value}` | No | Default `[]`. |
 | `bootstrapVersion` | string | No | Default `"1"`. |
@@ -48,12 +47,14 @@ Each entry is one catalog card, titled `<file name> <version>`
 |-------|------|----------|-------------|
 | `version` | string | Yes | 1–64 characters. The stack version (e.g. `2.12.0`); unique within the file. |
 | `tag` | string | Yes | 1–255 characters. The Docker Hub tag of this image; it must exist at import time and is unique within the file. The tag is the identity key: re-importing the same tag updates the existing entry in place. |
-| `rocmVersion` | string | Yes | `N.N` or `N.N.N`, e.g. `"7.14"`. |
-| `cpuCores` | integer | No | Overrides the file-level value. |
-| `memoryGiB` | integer | No | Overrides the file-level value. |
+| `metadata` | object | No | String, number, or boolean image metadata, such as `rocmVersion`. Default `{}`. |
 | `startupCommand` | string | No | Overrides the file-level value. |
 | `environment` | list of `{name, value}` | No | Overrides the file-level value. |
 | `bootstrapVersion` | string | No | Overrides the file-level value. |
+
+SVG icons must not contain scripts, event handlers, `foreignObject`, or
+JavaScript URLs. PNG icons must be between 16 and 4096 pixels per side.
+Icons are displayed unchanged in a fixed, aspect-preserving slot.
 
 Unknown keys are ignored, so additive fields can be introduced without
 bumping the schema version.
@@ -67,15 +68,14 @@ schemaVersion: 1
 name: PyTorch (ROCm)
 description: AMD ROCm PyTorch on MI325X with SSH and JupyterLab.
 image: featherlesscloud/rocm-pytorch
-cpuCores: 8
-memoryGiB: 64
 startupCommand: ""
 environment: []
 bootstrapVersion: "1"
 versions:
   - version: "2.12.0"
     tag: rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0
-    rocmVersion: "7.14"
+    metadata:
+      rocmVersion: "7.14"
 ```
 
 ## Adding a second version
@@ -88,10 +88,12 @@ icon:
 versions:
   - version: "2.12.0"
     tag: rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0
-    rocmVersion: "7.14"
+    metadata:
+      rocmVersion: "7.14"
   - version: "2.13.0"
     tag: rocm7.14.1-ubuntu24.04-py3.12-pytorch2.13.0
-    rocmVersion: "7.14.1"
+    metadata:
+      rocmVersion: "7.14.1"
 ```
 
 ## Import semantics

@@ -2,12 +2,12 @@ schemaVersion: 1
 name: SGLang (ROCm)
 description: AMD ROCm SGLang on MI325X with SSH and JupyterLab.
 image: featherlesscloud/rocm-sgl
-cpuCores: 8
-memoryGiB: 64
+icon: icon.png
 startupCommand: ""
 environment: []
 bootstrapVersion: "1"
 versions:
   - version: "0.5.17"
     tag: sglang0.5.17-rocm7.2.0-mi30x-20260819
-    rocmVersion: "7.2.0"
+    metadata:
+      rocmVersion: "7.2.0"

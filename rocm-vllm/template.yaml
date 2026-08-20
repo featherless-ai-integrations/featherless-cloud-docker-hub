@@ -2,12 +2,11 @@ schemaVersion: 1
 name: vLLM (ROCm)
 description: AMD ROCm vLLM on MI325X with SSH and JupyterLab.
 image: featherlesscloud/rocm-vllm
-cpuCores: 8
-memoryGiB: 64
 startupCommand: ""
 environment: []
 bootstrapVersion: "1"
 versions:
   - version: "0.23.0"
     tag: rocm7.14.0-ubuntu24.04-py3.14-pytorch2.11.0-vllm0.23.0
-    rocmVersion: "7.14.0"
+    metadata:
+      rocmVersion: "7.14.0"
