@@ -19,17 +19,18 @@ rocm-pytorch/
   template.yaml   # one entry per published image tag
 ```
 
-The file carries image-level identity and shared defaults. The `versions`
-list has one entry per image tag (stack version). Each entry becomes its
-own catalog card, and all entries of a file share the `image` repository
+The file carries the app's identity (`name`, `image`, icon) and shared
+defaults. The `versions` list has one entry per published stack version,
+keyed by its image tag. The catalog shows one card per
+app+version entry, and all entries of a file share the `image` repository
 and the icon.
 
 ## File-level fields
 
 | Field | Type | Required | Description |
-|-------|------|----------|-------------|
 | `schemaVersion` | integer | Yes | Must be `1`. The API rejects any other value. |
-| `image` | string | Yes | Docker Hub repository only (e.g. `featherlesscloud/rocm-pytorch`). No tag, no digest. |
+| `name` | string | Yes | 1–160 characters, **unique across every file**. The app name (e.g. `PyTorch (ROCm)`) — it is the card title prefix. Include `(ROCm)` to disambiguate from future CUDA builds. |
+| `image` | string | Yes | Docker Hub repository only (e.g. `featherlesscloud/rocm-pytorch`). No tag, no digest. The file's identity; imports match existing templates by this value. |
 | `description` | string | No | Shared by every entry of this file. |
 | `cpuCores` | integer | No | 1–256. Default `8`. |
 | `memoryGiB` | integer | No | 1–2048. Default `64`. |
@@ -40,12 +41,13 @@ and the icon.
 
 ## Version entry fields
 
-Each entry is one catalog card.
+Each entry is one catalog card, titled `<file name> <version>`
+(e.g. `PyTorch (ROCm) 2.12.0`).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | Yes | 1–160 characters, **unique across every entry in every file**. The app name plus the stack version (e.g. `PyTorch (ROCm) 2.12.0`) — it is the card title. Include `(ROCm)` to disambiguate from future CUDA builds. |
-| `tag` | string | Yes | 1–255 characters. The Docker Hub tag of this image; it must exist at import time and is unique within the file. |
+| `version` | string | Yes | 1–64 characters. The stack version (e.g. `2.12.0`); unique within the file. |
+| `tag` | string | Yes | 1–255 characters. The Docker Hub tag of this image; it must exist at import time and is unique within the file. The tag is the identity key: re-importing the same tag updates the existing entry in place. |
 | `rocmVersion` | string | Yes | `N.N` or `N.N.N`, e.g. `"7.14"`. |
 | `cpuCores` | integer | No | Overrides the file-level value. |
 | `memoryGiB` | integer | No | Overrides the file-level value. |
@@ -62,6 +64,7 @@ bumping the schema version.
 
 ```yaml
 schemaVersion: 1
+name: PyTorch (ROCm)
 description: AMD ROCm PyTorch on MI325X with SSH and JupyterLab.
 image: featherlesscloud/rocm-pytorch
 cpuCores: 8
@@ -70,7 +73,7 @@ startupCommand: ""
 environment: []
 bootstrapVersion: "1"
 versions:
-  - name: PyTorch (ROCm) 2.12.0
+  - version: "2.12.0"
     tag: rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0
     rocmVersion: "7.14"
 ```
@@ -83,10 +86,10 @@ icon:
 
 ```yaml
 versions:
-  - name: PyTorch (ROCm) 2.12.0
+  - version: "2.12.0"
     tag: rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0
     rocmVersion: "7.14"
-  - name: PyTorch (ROCm) 2.13.0
+  - version: "2.13.0"
     tag: rocm7.14.1-ubuntu24.04-py3.12-pytorch2.13.0
     rocmVersion: "7.14.1"
 ```
@@ -97,20 +100,25 @@ The API validates every file — schema, icon, and tag digest — **before
 writing anything**. A single error rejects the whole import with HTTP 422
 and a per-file list of fields; fix the file and re-import.
 
+One file maps to one template row, matched by its `image` repository. Each
+version entry maps to one version row, keyed by its `tag`.
+
 When the import runs clean:
 
 - Digests are resolved from each entry's tag on Docker Hub at import time
   and stored immutable.
-- Each entry auto-publishes as its own template card (no review step).
+- Each entry auto-publishes (no review step) and becomes one catalog card
+  titled `<name> <version>`.
 - Re-importing the same tag with the same digest is a no-op.
-- Re-importing the same tag with a **new digest** appends a version to the
-  same line; the card shows the new digest.
-- Adding a new entry creates a new line (new card) while existing lines keep
-  showing.
-- A `name` collision with an existing template fails that entry during the
-  import phase; the other entries still import.
-- Template metadata (name, description, icon) of matched lines is synced on
-  every import, so renaming a line or editing its icon takes effect on the
+- Re-importing the same tag with a **new digest** updates that entry's
+  digest and metadata in place; the card keeps showing.
+- Adding a new entry (new tag) creates a new version row and a new card
+  while existing cards keep showing.
+- A file whose `name` collides with an existing template of a **different**
+  image fails that file during the import phase; the other files still
+  import.
+- Template metadata (name, description, icon) is synced from the file on
+  every import, so renaming the app or editing its icon takes effect on the
   next import.
 
 ## Schema versions
