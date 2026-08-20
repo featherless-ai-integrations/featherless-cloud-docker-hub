@@ -5,6 +5,14 @@ log() { printf '[featherless-init] %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 is_true() { case "${1,,}" in 1|true|yes|on) return 0 ;; *) return 1 ;; esac; }
 
+resolve_cloud_user() {
+  if is_true "${CREATE_NEW_USER:-false}"; then
+    printf '%s\n' "${CLOUD_USER:-cloud}"
+  else
+    id -un
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage: featherless-init COMMAND [SERVICE]
@@ -65,11 +73,13 @@ select_services() {
 }
 
 configure_ssh() {
-  local user="${CLOUD_USER:-cloud}" home
+  local user home permit_root=no
   if [[ -n "${SSH_USERS_FILE:-}" ]]; then
     configure_file_based_ssh
     return
   fi
+  user="$(resolve_cloud_user)"
+  [[ "$user" == root ]] && permit_root=prohibit-password
   id "$user" >/dev/null 2>&1 || die "SSH user '$user' does not exist"
   home="$(getent passwd "$user" | cut -d: -f6)"
   install -d -m 0700 -o "$user" -g "$(id -gn "$user")" "$home/.ssh"
@@ -87,7 +97,7 @@ configure_ssh() {
   mkdir -p /etc/ssh/sshd_config.d
   cat > /etc/ssh/sshd_config.d/99-featherless.conf <<EOF
 Port ${SSH_PORT:-22}
-PermitRootLogin no
+PermitRootLogin ${permit_root}
 PasswordAuthentication $([[ -n "${SSH_PASSWORD:-}" ]] && printf yes || printf no)
 PubkeyAuthentication yes
 AllowUsers ${user}
@@ -161,7 +171,8 @@ EOF
 }
 
 run_as_cloud_user() {
-  local user="${CLOUD_USER:-cloud}"
+  local user
+  user="$(resolve_cloud_user)"
   if (( EUID == 0 )) && [[ "$(id -u "$user")" != 0 ]]; then
     runuser -u "$user" -- "$@"
   else
@@ -190,6 +201,7 @@ serve() {
     command -v jupyter >/dev/null 2>&1 || die "jupyter is not installed; run '$0 install' first"
     local -a args=(lab --ip=0.0.0.0 --port="${JUPYTER_PORT:-8888}" --no-browser
       --ServerApp.root_dir="${JUPYTER_ROOT_DIR:-/workspace}")
+    [[ "$(id -u "$(resolve_cloud_user)")" == 0 ]] && args+=(--allow-root)
     [[ -n "${JUPYTER_TOKEN:-}" ]] && args+=(--ServerApp.token="${JUPYTER_TOKEN}")
     [[ -n "${JUPYTER_PASSWORD:-}" ]] && args+=(--ServerApp.password="${JUPYTER_PASSWORD}")
     if [[ -z "${JUPYTER_TOKEN:-}" && -z "${JUPYTER_PASSWORD:-}" ]]; then

@@ -5,6 +5,7 @@ engine="${CONTAINER_ENGINE:-podman}"
 base_image="${SMOKE_BASE_IMAGE:-debian:bookworm-slim}"
 image="${SMOKE_IMAGE:-localhost/featherless-mi325x-smoke:test}"
 dockerfile="${SMOKE_DOCKERFILE:-Dockerfile}"
+create_new_user="${SMOKE_CREATE_NEW_USER:-false}"
 
 command -v "$engine" >/dev/null 2>&1 || {
   printf 'ERROR: container engine not found: %s\n' "$engine" >&2
@@ -25,6 +26,7 @@ printf 'Building add-on smoke image for %s with %s\n' "$platform" "$engine"
 "$engine" build \
   --platform "$platform" \
   --build-arg "BASE_IMAGE=$base_image" \
+  --build-arg "CREATE_NEW_USER=$create_new_user" \
   --file "$dockerfile" \
   --tag "$image" \
   .
@@ -35,7 +37,11 @@ printf 'Checking installed components\n'
   uv --version
   jupyter lab --version
   /usr/sbin/sshd -t
-  test "$(id -u cloud)" = 1000
+  if [[ "${CREATE_NEW_USER:-false}" == true ]]; then
+    test "$(id -u cloud)" = 1000
+  else
+    test "$(id -u)" = 0
+  fi
   test -d /workspace
 '
 

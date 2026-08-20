@@ -52,7 +52,9 @@ Build one variant or override an upstream image:
 
 ```bash
 docker buildx bake pytorch --load
-BASE_PYTORCH=rocm/pytorch@sha256:... docker buildx bake pytorch --load
+docker build --file rocm-pytorch/Dockerfile \
+  --build-arg BASE_IMAGE=rocm/pytorch@sha256:... \
+  --tag localhost/rocm-pytorch:override .
 ```
 
 Images are `linux/amd64`. GitHub Actions builds all pull requests without
@@ -66,6 +68,8 @@ Configure the GitHub repository with:
 
 - Secret `DOCKERHUB_USERNAME` — account allowed to push the three repositories.
 - Secret `DOCKERHUB_TOKEN` — Docker Hub access token, not an account password.
+- Optional repository variable `CREATE_NEW_USER=true` — create `CLOUD_USER`
+  instead of retaining the upstream image's current account.
 
 The current pinned version tags are derived from `versions.env`:
 
@@ -74,6 +78,19 @@ The current pinned version tags are derived from `versions.env`:
 | `rocm-pytorch` | `rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0` |
 | `rocm-sgl` | `sglang0.5.17-rocm7.2.0-mi30x-20260819` |
 | `rocm-vllm` | `rocm7.14.0-ubuntu24.04-py3.14-pytorch2.11.0-vllm0.23.0` |
+
+All upstream bases are pulled from AMD's `rocm/*` Docker Hub namespace. The
+resulting Featherless images are published to the separate `featherlesscloud/*`
+namespace.
+
+Each image job explicitly pulls two ordinary images into its runner's Docker
+image store: the digest-pinned AMD source and the existing complete-version
+Featherless image, when that output already exists. The latter is passed to
+`docker build --cache-from`; inline cache metadata travels inside the normal
+built image rather than a separate cache artifact or floating `buildcache` tag.
+If the source, Dockerfile, build arguments, and copied files are unchanged, the
+package-installation step is reused. The first publication of a stack version
+has no existing output image and builds normally.
 
 ## Run on an MI325X host
 
@@ -109,10 +126,27 @@ on port 8888, set `ENABLE_JUPYTER=true`; persisted notebooks live in the
 | `JUPYTER_PASSWORD` | empty | Jupyter password hash (not plain text) |
 | `JUPYTER_ROOT_DIR` | `/workspace` | Directory exposed by Jupyter |
 | `CLOUD_USER` | `cloud` | Runtime user for SSH and Jupyter |
+| `CREATE_NEW_USER` | `false` | Create `CLOUD_USER`, its UID/GID, and home directory |
 
 If neither Jupyter credential is set, authentication is disabled and a warning is
 logged. Do that only behind a trusted network. Prefer `SSH_PUBLIC_KEY` over
 `SSH_PASSWORD`; environment variables can be visible through container tooling.
+
+By default the build keeps the account already provided by the upstream image.
+To create the configured cloud account instead, build with:
+
+```bash
+docker build --build-arg CREATE_NEW_USER=true \
+  --file rocm-pytorch/Dockerfile --tag my-image .
+```
+
+When disabled, the build skips `groupadd` and `useradd`, uses the current
+account's passwd entry and home directory, and carries the mode into runtime.
+If the current account is `root`,
+SSH permits root by public key only (`PermitRootLogin prohibit-password`), while
+password login remains unavailable for root. Jupyter receives `--allow-root` in
+that case. The file-based multi-user mode still takes precedence when
+`SSH_USERS_FILE` is defined.
 
 SSH is enabled and Jupyter is disabled by default. Run one service by passing
 `run ssh` or `run jupyter`; `run all` explicitly starts both. The `ENABLE_SSH`

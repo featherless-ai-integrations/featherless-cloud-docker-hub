@@ -7,10 +7,13 @@ source "$repo_root/versions.env"
 
 jq -nc \
   --arg pt "$PYTORCH_IMAGE_TAG" \
+  --arg pts "$PYTORCH_BASE" \
   --arg sgl "$SGL_IMAGE_TAG" \
+  --arg sgls "$SGL_BASE" \
   --arg vllm "$VLLM_IMAGE_TAG" \
+  --arg vllms "$VLLM_BASE" \
   '{include: [
-    {target:"pytorch", repository:"rocm-pytorch", version:$pt},
-    {target:"sgl-dev", repository:"rocm-sgl", version:$sgl},
-    {target:"vllm", repository:"rocm-vllm", version:$vllm}
+    {target:"pytorch", repository:"rocm-pytorch", version:$pt, source:$pts},
+    {target:"sgl-dev", repository:"rocm-sgl", version:$sgl, source:$sgls},
+    {target:"vllm", repository:"rocm-vllm", version:$vllm, source:$vllms}
   ]}'
