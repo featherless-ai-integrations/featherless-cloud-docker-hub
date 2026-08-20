@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+engine="${CONTAINER_ENGINE:-podman}"
+base_image="${SMOKE_BASE_IMAGE:-debian:bookworm-slim}"
+image="${SMOKE_IMAGE:-localhost/featherless-mi325x-smoke:test}"
+dockerfile="${SMOKE_DOCKERFILE:-Dockerfile}"
+
+command -v "$engine" >/dev/null 2>&1 || {
+  printf 'ERROR: container engine not found: %s\n' "$engine" >&2
+  exit 1
+}
+
+# Build natively. The production ROCm bases are amd64-only, but all operations
+# in this add-on layer are architecture-neutral and use architecture-aware apt
+# packages and uv installers.
+arch="$($engine info --format '{{.Host.Arch}}')"
+case "$arch" in
+  arm64|aarch64) platform=linux/arm64 ;;
+  amd64|x86_64) platform=linux/amd64 ;;
+  *) printf 'ERROR: unsupported builder architecture: %s\n' "$arch" >&2; exit 1 ;;
+esac
+
+printf 'Building add-on smoke image for %s with %s\n' "$platform" "$engine"
+"$engine" build \
+  --platform "$platform" \
+  --build-arg "BASE_IMAGE=$base_image" \
+  --file "$dockerfile" \
+  --tag "$image" \
+  .
+
+printf 'Checking installed components\n'
+"$engine" run --rm --platform "$platform" "$image" bash -lc '
+  set -Eeuo pipefail
+  uv --version
+  jupyter lab --version
+  /usr/sbin/sshd -t
+  test "$(id -u cloud)" = 1000
+  test -d /workspace
+'
+
+printf 'Smoke build passed: %s\n' "$image"

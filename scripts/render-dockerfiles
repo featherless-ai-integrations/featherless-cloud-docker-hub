@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+template="$repo_root/templates/rocm.Dockerfile"
+check=false
+[[ "${1:-}" == --check ]] && check=true
+
+render() {
+  local output="$1" base="$2" description="$3" temporary
+  temporary="$(mktemp)"
+  sed -e "s|@@BASE_IMAGE@@|${base}|g" \
+      -e "s|@@DESCRIPTION@@|${description}|g" \
+      "$template" > "$temporary"
+
+  if $check; then
+    if ! cmp -s "$temporary" "$repo_root/$output"; then
+      printf 'ERROR: %s is stale; run scripts/render-dockerfiles\n' "$output" >&2
+      rm -f "$temporary"
+      return 1
+    fi
+    rm -f "$temporary"
+  else
+    mkdir -p "$(dirname "$repo_root/$output")"
+    mv "$temporary" "$repo_root/$output"
+    printf 'Rendered %s\n' "$output"
+  fi
+}
+
+render Dockerfile \
+  'rocm/pytorch:latest' \
+  'Featherless AI ROCm development image for AMD Instinct MI325X'
+render rocm-pytorch/Dockerfile \
+  'rocm/pytorch:latest' \
+  'Featherless AI ROCm PyTorch image for AMD Instinct MI325X'
+render rocm-sgl/Dockerfile \
+  'rocm/sgl-dev:v0.5.13.post1-ubuntu24.04-py3.14-rocm7.14' \
+  'Featherless AI ROCm SGLang image for AMD Instinct MI325X'
+render rocm-vllm/Dockerfile \
+  'rocm/vllm:rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0' \
+  'Featherless AI ROCm vLLM image for AMD Instinct MI325X'
