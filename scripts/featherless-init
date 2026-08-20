@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+log() { printf '[featherless-init] %s\n' "$*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+is_true() { case "${1,,}" in 1|true|yes|on) return 0 ;; *) return 1 ;; esac; }
+
+usage() {
+  cat <<'EOF'
+Usage: featherless-init COMMAND [SERVICE]
+
+Commands:
+  start [all|ssh|jupyter]  Install missing components, then start services
+  run   [all|ssh|jupyter]  Start already-installed services (container mode)
+  install                  Install OpenSSH, uv, and JupyterLab
+  help                     Show this help
+
+With no command, "run" is used and the ENABLE_* defaults are respected.
+Pass "all" explicitly to enable both services. Configuration is supplied through the
+environment; see README.md for SSH_PUBLIC_KEY, SSH_PASSWORD, JUPYTER_TOKEN,
+ports, user, and GPU validation options.
+EOF
+}
+
+as_root() {
+  if (( EUID == 0 )); then "$@"; elif command -v sudo >/dev/null 2>&1; then sudo "$@"; else die "root or sudo is required to install packages"; fi
+}
+
+install_components() {
+  command -v apt-get >/dev/null 2>&1 || die "this installer requires Ubuntu or another Debian-based system with apt-get"
+  log "Installing OpenSSH, Python, and runtime utilities"
+  as_root env DEBIAN_FRONTEND=noninteractive apt-get update
+  as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates curl openssh-server python3 python3-pip python3-venv tini
+
+  if ! command -v uv >/dev/null 2>&1; then
+    log "Installing uv"
+    curl -LsSf https://astral.sh/uv/install.sh | as_root env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
+  fi
+  if ! command -v jupyter >/dev/null 2>&1; then
+    log "Installing JupyterLab"
+    as_root uv pip install --system --break-system-packages jupyterlab
+  fi
+  as_root mkdir -p /run/sshd
+  as_root ssh-keygen -A
+  if (( EUID == 0 )) && [[ -f /.dockerenv ]]; then rm -rf /var/lib/apt/lists/*; fi
+}
+
+components_available() {
+  command -v /usr/sbin/sshd >/dev/null 2>&1 &&
+    command -v uv >/dev/null 2>&1 &&
+    command -v jupyter >/dev/null 2>&1 &&
+    command -v tini >/dev/null 2>&1
+}
+
+select_services() {
+  case "${1:-}" in
+    '') ;;
+    all) ENABLE_SSH=true; ENABLE_JUPYTER=true ;;
+    ssh) ENABLE_SSH=true; ENABLE_JUPYTER=false ;;
+    jupyter) ENABLE_SSH=false; ENABLE_JUPYTER=true ;;
+    *) die "unknown service '$1' (expected all, ssh, or jupyter)" ;;
+  esac
+  export ENABLE_SSH ENABLE_JUPYTER
+}
+
+configure_ssh() {
+  local user="${CLOUD_USER:-cloud}" home
+  id "$user" >/dev/null 2>&1 || die "SSH user '$user' does not exist"
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  install -d -m 0700 -o "$user" -g "$(id -gn "$user")" "$home/.ssh"
+  install -d -m 0755 -o root -g root /run/sshd
+
+  if [[ -n "${SSH_PUBLIC_KEY:-}" ]]; then
+    printf '%s\n' "$SSH_PUBLIC_KEY" > "$home/.ssh/authorized_keys"
+    chown "$user:$(id -gn "$user")" "$home/.ssh/authorized_keys"
+    chmod 0600 "$home/.ssh/authorized_keys"
+  fi
+  if [[ -n "${SSH_PASSWORD:-}" ]]; then
+    printf '%s:%s\n' "$user" "$SSH_PASSWORD" | chpasswd
+  fi
+
+  mkdir -p /etc/ssh/sshd_config.d
+  cat > /etc/ssh/sshd_config.d/99-featherless.conf <<EOF
+Port ${SSH_PORT:-22}
+PermitRootLogin no
+PasswordAuthentication $([[ -n "${SSH_PASSWORD:-}" ]] && printf yes || printf no)
+PubkeyAuthentication yes
+AllowUsers ${user}
+EOF
+  ssh-keygen -A
+  /usr/sbin/sshd -t
+}
+
+run_as_cloud_user() {
+  local user="${CLOUD_USER:-cloud}"
+  if (( EUID == 0 )) && [[ "$(id -u "$user")" != 0 ]]; then
+    runuser -u "$user" -- "$@"
+  else
+    "$@"
+  fi
+}
+
+serve() {
+  local -a pids=()
+  if is_true "${REQUIRE_MI325X:-true}"; then
+    [[ -e /dev/kfd ]] || die "MI325X validation failed: /dev/kfd is not available"
+    if command -v rocm-smi >/dev/null 2>&1; then
+      rocm-smi --showproductname 2>/dev/null | grep -Eqi 'MI325X|AMD Instinct MI325' ||
+        die "MI325X validation failed: rocm-smi did not report an MI325X"
+    else
+      log "WARNING: rocm-smi is unavailable; cannot verify that the attached GPU is an MI325X"
+    fi
+  fi
+  if is_true "${ENABLE_SSH:-true}"; then
+    (( EUID == 0 )) || die "sshd must be started as root"
+    configure_ssh
+    log "Starting sshd on port ${SSH_PORT:-22}"
+    /usr/sbin/sshd -D -e & pids+=("$!")
+  fi
+  if is_true "${ENABLE_JUPYTER:-false}"; then
+    command -v jupyter >/dev/null 2>&1 || die "jupyter is not installed; run '$0 install' first"
+    local -a args=(lab --ip=0.0.0.0 --port="${JUPYTER_PORT:-8888}" --no-browser
+      --ServerApp.root_dir="${JUPYTER_ROOT_DIR:-/workspace}")
+    [[ -n "${JUPYTER_TOKEN:-}" ]] && args+=(--ServerApp.token="${JUPYTER_TOKEN}")
+    [[ -n "${JUPYTER_PASSWORD:-}" ]] && args+=(--ServerApp.password="${JUPYTER_PASSWORD}")
+    if [[ -z "${JUPYTER_TOKEN:-}" && -z "${JUPYTER_PASSWORD:-}" ]]; then
+      args+=(--ServerApp.token='' --ServerApp.password='')
+      log "WARNING: Jupyter authentication is disabled; set JUPYTER_TOKEN or JUPYTER_PASSWORD"
+    fi
+    log "Starting JupyterLab on port ${JUPYTER_PORT:-8888}"
+    run_as_cloud_user jupyter "${args[@]}" & pids+=("$!")
+  fi
+  ((${#pids[@]} > 0)) || die "no service enabled; set ENABLE_SSH=true and/or ENABLE_JUPYTER=true"
+
+  trap 'kill -TERM "${pids[@]}" 2>/dev/null || true' TERM INT
+  local status
+  set +e
+  wait -n "${pids[@]}"
+  status=$?
+  set -e
+  kill -TERM "${pids[@]}" 2>/dev/null || true
+  wait || true
+  return "$status"
+}
+
+case "${1:-run}" in
+  install) install_components ;;
+  start)
+    shift || true
+    select_services "${1:-}"
+    components_available || install_components
+    serve
+    ;;
+  run|serve)
+    shift || true
+    select_services "${1:-}"
+    serve
+    ;;
+  help|-h|--help) usage ;;
+  *) exec "$@" ;;
+esac

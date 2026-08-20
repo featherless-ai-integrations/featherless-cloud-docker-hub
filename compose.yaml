@@ -1,0 +1,30 @@
+services:
+  gpu:
+    image: ${IMAGE:-ghcr.io/featherless-ai/rocm-pytorch:dev}
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+    ipc: host
+    security_opt:
+      - seccomp=unconfined
+    cap_add:
+      - SYS_PTRACE
+    shm_size: 8gb
+    ports:
+      - "${SSH_PORT:-2222}:22"
+      - "${JUPYTER_PORT:-8888}:8888"
+    environment:
+      SSH_PUBLIC_KEY: ${SSH_PUBLIC_KEY:-}
+      SSH_PASSWORD: ${SSH_PASSWORD:-}
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-}
+      ENABLE_SSH: ${ENABLE_SSH:-true}
+      ENABLE_JUPYTER: ${ENABLE_JUPYTER:-false}
+      REQUIRE_MI325X: ${REQUIRE_MI325X:-true}
+    volumes:
+      - workspace:/workspace
+    restart: unless-stopped
+
+volumes:
+  workspace:
