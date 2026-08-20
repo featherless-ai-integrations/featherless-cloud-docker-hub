@@ -32,12 +32,13 @@ layer or an upstream default, regenerate and verify them with:
 ./scripts/render-dockerfiles --check
 ```
 
-The exact upstream images are centralized in `docker-bake.hcl`. MI300X and
+The exact upstream images and immutable AMD64 digests are centralized in
+`versions.env`. MI300X and
 MI325X happen to share the `gfx942` ISA, but this repository deliberately treats
-them as separate deployment targets. An upstream tag containing `mi300x` or the
-ambiguous `mi30x` family name is rejected at build time. AMD images with generic
-`gfx94X`/CDNA support may be used only after validation on physical MI325X
-hardware. Pin release builds to the validated immutable digest.
+them as separate deployment targets. An explicitly `mi300x`-only upstream tag is
+rejected. AMD uses `mi30x` for some release artifacts spanning the gfx942 family;
+those and generic `gfx94X`/CDNA artifacts may be used only after validation on
+physical MI325X hardware. Generated Dockerfiles consume digest-pinned references.
 
 ## Build
 
@@ -54,10 +55,26 @@ docker buildx bake pytorch --load
 BASE_PYTORCH=rocm/pytorch@sha256:... docker buildx bake pytorch --load
 ```
 
-Images are `linux/amd64`; the GitHub Actions workflow builds pull requests and
-publishes `edge` or version-tagged images to GHCR from the default branch/tags.
-It intentionally uses a high-disk, self-hosted x86_64 runner because the three
-ROCm bases are too large for typical hosted-runner disks.
+Images are `linux/amd64`. GitHub Actions builds all pull requests without
+publishing. Pushes to `main`, version tags, and manual dispatches publish each
+repository to Docker Hub with a complete stack-version tag and immutable
+`sha-<commit>` tag. No `latest`, `stable`, or partially versioned aliases are
+published. Each matrix entry runs on a separate GitHub-hosted Ubuntu runner, so
+the three large ROCm builds do not share a runner or its local storage.
+
+Configure the GitHub repository with:
+
+- Repository variable `DOCKERHUB_NAMESPACE` — Docker Hub organization/user.
+- Secret `DOCKERHUB_USERNAME` — account allowed to push the three repositories.
+- Secret `DOCKERHUB_TOKEN` — Docker Hub access token, not an account password.
+
+The current pinned version tags are derived from `versions.env`:
+
+| Repository | Complete stack-version tag |
+| --- | --- |
+| `rocm-pytorch` | `rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0` |
+| `rocm-sgl` | `sglang0.5.17-rocm7.2.0-mi30x-20260819` |
+| `rocm-vllm` | `rocm7.14.0-ubuntu24.04-py3.14-pytorch2.11.0-vllm0.23.0` |
 
 ## Run on an MI325X host
 
@@ -65,7 +82,7 @@ ROCm containers need `/dev/kfd`, `/dev/dri`, the video group, and generous share
 memory. The included Compose configuration supplies these:
 
 ```bash
-export IMAGE=ghcr.io/featherless-ai/rocm-pytorch:edge
+export IMAGE=YOUR_DOCKERHUB_NAMESPACE/rocm-pytorch:rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0
 export SSH_PUBLIC_KEY="$(< ~/.ssh/id_ed25519.pub)"
 export JUPYTER_TOKEN="$(openssl rand -hex 24)"
 docker compose up -d
@@ -105,7 +122,7 @@ command. Passing any other command replaces the launcher:
 
 ```bash
 docker run --rm -it --device=/dev/kfd --device=/dev/dri \
-  ghcr.io/featherless-ai/rocm-pytorch:edge bash
+  YOUR_DOCKERHUB_NAMESPACE/rocm-pytorch:rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0 bash
 ```
 
 ### File-based SSH accounts

@@ -1,4 +1,4 @@
-name: Build images
+name: Build and publish images
 
 on:
   pull_request:
@@ -9,25 +9,68 @@ on:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build:
-    # ROCm bases are 10-25+ GB compressed; use a high-disk x86_64 runner.
-    runs-on: [self-hosted, linux, x64]
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
       - name: Verify generated Dockerfiles
         run: scripts/render-dockerfiles --check
-      - uses: docker/login-action@v3
-        if: github.event_name != 'pull_request'
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build (and publish outside pull requests)
+      - name: Read pinned release matrix
+        id: matrix
+        run: echo "value=$(scripts/release-matrix)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    # Matrix jobs are isolated: each image gets its own GitHub-hosted runner.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      IMAGE_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || 'local' }}
+      SHOULD_PUSH: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require Docker Hub configuration for publishing
+        if: env.SHOULD_PUSH == 'true'
         env:
-          REGISTRY: ghcr.io/${{ github.repository_owner }}
-          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'edge' }}
-        run: docker buildx bake ${{ github.event_name != 'pull_request' && '--push' || '' }}
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          test -n "$DOCKERHUB_NAMESPACE" || { echo 'Missing repository variable DOCKERHUB_NAMESPACE' >&2; exit 1; }
+          test -n "$DOCKERHUB_USERNAME" || { echo 'Missing secret DOCKERHUB_USERNAME' >&2; exit 1; }
+          test -n "$DOCKERHUB_TOKEN" || { echo 'Missing secret DOCKERHUB_TOKEN' >&2; exit 1; }
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: env.SHOULD_PUSH == 'true'
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and optionally publish ${{ matrix.repository }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.repository }}/Dockerfile
+          platforms: linux/amd64
+          push: ${{ env.SHOULD_PUSH == 'true' }}
+          tags: |
+            ${{ env.IMAGE_NAMESPACE }}/${{ matrix.repository }}:${{ matrix.version }}
+            ${{ env.IMAGE_NAMESPACE }}/${{ matrix.repository }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ matrix.version }}
+          provenance: mode=max
+          sbom: true
