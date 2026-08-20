@@ -7,7 +7,7 @@ and JupyterLab over an AMD-maintained ROCm image.
 | Target | AMD base | Output image |
 | --- | --- | --- |
 | `pytorch` | `rocm/pytorch` | `rocm-pytorch` |
-| `sgl-dev` | `rocm/sgl-dev` | `rocm-sgl-dev` |
+| `sgl-dev` | `rocm/sgl-dev` | `rocm-sgl` |
 | `vllm` | `rocm/vllm` | `rocm-vllm` |
 
 Each output has a dedicated Docker Hub Autobuild Dockerfile:
