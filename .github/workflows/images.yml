@@ -35,8 +35,9 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
-      IMAGE_NAMESPACE: featherlesscloud
+      OUTPUT_NAMESPACE: featherlesscloud
       SHOULD_PUSH: ${{ github.event_name != 'pull_request' }}
+      CREATE_NEW_USER: ${{ vars.CREATE_NEW_USER || 'false' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -49,26 +50,55 @@ jobs:
           test -n "$DOCKERHUB_USERNAME" || { echo 'Missing secret DOCKERHUB_USERNAME' >&2; exit 1; }
           test -n "$DOCKERHUB_TOKEN" || { echo 'Missing secret DOCKERHUB_TOKEN' >&2; exit 1; }
 
-      - uses: docker/setup-buildx-action@v3
-
       - uses: docker/login-action@v3
         if: env.SHOULD_PUSH == 'true'
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and optionally publish ${{ matrix.repository }}
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.repository }}/Dockerfile
-          platforms: linux/amd64
-          push: ${{ env.SHOULD_PUSH == 'true' }}
-          tags: |
-            ${{ env.IMAGE_NAMESPACE }}/${{ matrix.repository }}:${{ matrix.version }}
-            ${{ env.IMAGE_NAMESPACE }}/${{ matrix.repository }}:sha-${{ github.sha }}
-          labels: |
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ matrix.version }}
-          provenance: mode=max
-          sbom: true
+      - name: Pull pinned AMD source image
+        run: docker pull --platform linux/amd64 '${{ matrix.source }}'
+
+      - name: Pull existing built image when available
+        id: existing
+        env:
+          BUILT_IMAGE: ${{ env.OUTPUT_NAMESPACE }}/${{ matrix.repository }}:${{ matrix.version }}
+        run: |
+          if docker pull --platform linux/amd64 "$BUILT_IMAGE"; then
+            echo 'found=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'No existing built image; this version will build from source.'
+            echo 'found=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build ${{ matrix.repository }}
+        env:
+          BUILT_IMAGE: ${{ env.OUTPUT_NAMESPACE }}/${{ matrix.repository }}:${{ matrix.version }}
+          SHA_IMAGE: ${{ env.OUTPUT_NAMESPACE }}/${{ matrix.repository }}:sha-${{ github.sha }}
+          CACHE_FOUND: ${{ steps.existing.outputs.found }}
+        run: |
+          cache_args=()
+          if [[ "$CACHE_FOUND" == true ]]; then
+            cache_args+=(--cache-from "$BUILT_IMAGE")
+          fi
+          docker build \
+            --platform linux/amd64 \
+            --pull \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --build-arg "CREATE_NEW_USER=$CREATE_NEW_USER" \
+            "${cache_args[@]}" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label 'org.opencontainers.image.version=${{ matrix.version }}' \
+            --file '${{ matrix.repository }}/Dockerfile' \
+            --tag "$BUILT_IMAGE" \
+            --tag "$SHA_IMAGE" \
+            .
+
+      - name: Publish ${{ matrix.repository }}
+        if: env.SHOULD_PUSH == 'true'
+        env:
+          BUILT_IMAGE: ${{ env.OUTPUT_NAMESPACE }}/${{ matrix.repository }}:${{ matrix.version }}
+          SHA_IMAGE: ${{ env.OUTPUT_NAMESPACE }}/${{ matrix.repository }}:sha-${{ github.sha }}
+        run: |
+          docker push "$BUILT_IMAGE"
+          docker push "$SHA_IMAGE"
