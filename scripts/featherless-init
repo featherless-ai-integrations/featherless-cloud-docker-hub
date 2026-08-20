@@ -66,6 +66,10 @@ select_services() {
 
 configure_ssh() {
   local user="${CLOUD_USER:-cloud}" home
+  if [[ -n "${SSH_USERS_FILE:-}" ]]; then
+    configure_file_based_ssh
+    return
+  fi
   id "$user" >/dev/null 2>&1 || die "SSH user '$user' does not exist"
   home="$(getent passwd "$user" | cut -d: -f6)"
   install -d -m 0700 -o "$user" -g "$(id -gn "$user")" "$home/.ssh"
@@ -90,6 +94,70 @@ AllowUsers ${user}
 EOF
   ssh-keygen -A
   /usr/sbin/sshd -t
+}
+
+configure_file_based_ssh() {
+  local users_file="${SSH_USERS_FILE}" keys_dir="${SSH_AUTHORIZED_KEYS_DIR:-}"
+  local login_group="${SSH_LOGIN_GROUP:-featherless-ssh}"
+  local runtime_keys_dir user uid gid shell extra home count=0
+
+  [[ -f "$users_file" ]] || die "SSH_USERS_FILE does not exist: $users_file"
+  [[ -n "$keys_dir" && -d "$keys_dir" ]] ||
+    die "SSH_AUTHORIZED_KEYS_DIR must name an existing directory in file-based mode"
+  [[ "$keys_dir" = /* && "$keys_dir" != *[[:space:]]* ]] ||
+    die "SSH_AUTHORIZED_KEYS_DIR must be an absolute path without whitespace"
+  [[ "$login_group" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "invalid SSH_LOGIN_GROUP: $login_group"
+  [[ -z "${SSH_PASSWORD:-}" ]] || die "SSH_PASSWORD is not supported in file-based SSH mode"
+
+  getent group "$login_group" >/dev/null || groupadd --system "$login_group"
+  runtime_keys_dir="$(mktemp -d /run/featherless-authorized-keys.XXXXXX)"
+  chmod 0755 "$runtime_keys_dir"
+
+  while IFS=: read -r user uid gid shell extra; do
+    [[ -z "$user" || "$user" == \#* ]] && continue
+    [[ -z "$extra" ]] || die "invalid users file entry for '$user': too many fields"
+    [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "invalid SSH username: $user"
+    [[ "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ ]] ||
+      die "UID and GID must be numeric for SSH user '$user'"
+    shell="${shell:-/bin/bash}"
+    [[ "$shell" = /* && -x "$shell" ]] || die "invalid shell for SSH user '$user': $shell"
+    [[ -s "$keys_dir/$user" ]] || die "missing or empty authorized-keys file: $keys_dir/$user"
+    if grep -q 'BEGIN .*PRIVATE KEY' "$keys_dir/$user"; then
+      die "private key material found where a public key was expected: $keys_dir/$user"
+    fi
+    install -o root -g root -m 0644 "$keys_dir/$user" "$runtime_keys_dir/$user"
+
+    if ! getent group "$gid" >/dev/null; then
+      getent group "$user" >/dev/null && die "group '$user' exists with a different GID"
+      groupadd --gid "$gid" "$user"
+    fi
+    if id "$user" >/dev/null 2>&1; then
+      [[ "$(id -u "$user")" == "$uid" && "$(id -g "$user")" == "$gid" ]] ||
+        die "existing account '$user' does not match requested UID:GID $uid:$gid"
+    else
+      useradd --uid "$uid" --gid "$gid" --create-home --shell "$shell" "$user"
+    fi
+    usermod --append --groups "$login_group" "$user"
+    home="$(getent passwd "$user" | cut -d: -f6)"
+    install -d -m 0750 -o "$user" -g "$gid" "$home"
+    count=$((count + 1))
+  done < "$users_file"
+  (( count > 0 )) || die "SSH_USERS_FILE contains no accounts: $users_file"
+
+  install -d -m 0755 -o root -g root /run/sshd /etc/ssh/sshd_config.d
+  cat > /etc/ssh/sshd_config.d/99-featherless.conf <<EOF
+Port ${SSH_PORT:-22}
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+AuthorizedKeysFile ${runtime_keys_dir}/%u
+AllowGroups ${login_group}
+EOF
+  ssh-keygen -A
+  /usr/sbin/sshd -t
+  log "Configured $count SSH accounts from $users_file"
 }
 
 run_as_cloud_user() {
