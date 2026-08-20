@@ -64,7 +64,6 @@ the three large ROCm builds do not share a runner or its local storage.
 
 Configure the GitHub repository with:
 
-- Repository variable `DOCKERHUB_NAMESPACE` — Docker Hub organization/user.
 - Secret `DOCKERHUB_USERNAME` — account allowed to push the three repositories.
 - Secret `DOCKERHUB_TOKEN` — Docker Hub access token, not an account password.
 
@@ -82,7 +81,7 @@ ROCm containers need `/dev/kfd`, `/dev/dri`, the video group, and generous share
 memory. The included Compose configuration supplies these:
 
 ```bash
-export IMAGE=YOUR_DOCKERHUB_NAMESPACE/rocm-pytorch:rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0
+export IMAGE=featherlesscloud/rocm-pytorch:rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0
 export SSH_PUBLIC_KEY="$(< ~/.ssh/id_ed25519.pub)"
 export JUPYTER_TOKEN="$(openssl rand -hex 24)"
 docker compose up -d
@@ -122,7 +121,7 @@ command. Passing any other command replaces the launcher:
 
 ```bash
 docker run --rm -it --device=/dev/kfd --device=/dev/dri \
-  YOUR_DOCKERHUB_NAMESPACE/rocm-pytorch:rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0 bash
+  featherlesscloud/rocm-pytorch:rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0 bash
 ```
 
 ### File-based SSH accounts
