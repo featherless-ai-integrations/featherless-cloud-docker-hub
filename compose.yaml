@@ -1,6 +1,6 @@
 services:
   gpu:
-    image: ${IMAGE:?Set IMAGE to a fully versioned image reference}
+    image: ${IMAGE:-featherlesscloud/rocm-pytorch:rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0}
     devices:
       - /dev/kfd
       - /dev/dri
