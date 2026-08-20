@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=../versions.env
+source "$repo_root/versions.env"
+
+jq -nc \
+  --arg pt "$PYTORCH_IMAGE_TAG" \
+  --arg sgl "$SGL_IMAGE_TAG" \
+  --arg vllm "$VLLM_IMAGE_TAG" \
+  '{include: [
+    {target:"pytorch", repository:"rocm-pytorch", version:$pt},
+    {target:"sgl-dev", repository:"rocm-sgl", version:$sgl},
+    {target:"vllm", repository:"rocm-vllm", version:$vllm}
+  ]}'

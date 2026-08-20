@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Generated from templates/rocm.Dockerfile; run scripts/render-dockerfiles.
-ARG BASE_IMAGE=rocm/vllm:rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0
+ARG BASE_IMAGE=rocm/vllm:rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0@sha256:ac1be45dac88db3fd32c1aa45ecd043c0efad7a809c1bcb36960e369d9dbb8a6
 FROM ${BASE_IMAGE}
 ARG BASE_IMAGE
 ARG CLOUD_USER=cloud
@@ -27,7 +27,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 COPY scripts/featherless-init /usr/local/bin/featherless-init
 RUN chmod 0755 /usr/local/bin/featherless-init \
-    && case "${BASE_IMAGE}" in *mi300x*|*mi30x*) echo "Refusing MI300X/MI30X base for an MI325X image: ${BASE_IMAGE}" >&2; exit 1;; esac \
+    && case "${BASE_IMAGE}" in *mi300x*) echo "Refusing an MI300X-specific base for an MI325X image: ${BASE_IMAGE}" >&2; exit 1;; esac \
     && /usr/local/bin/featherless-init install \
     && if ! getent group "${CLOUD_GID}" >/dev/null; then groupadd --gid "${CLOUD_GID}" "${CLOUD_USER}"; fi \
     && if ! id "${CLOUD_USER}" >/dev/null 2>&1; then useradd --uid "${CLOUD_UID}" --gid "${CLOUD_GID}" --create-home --shell /bin/bash "${CLOUD_USER}"; fi \

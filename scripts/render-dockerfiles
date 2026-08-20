@@ -5,6 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 template="$repo_root/templates/rocm.Dockerfile"
 check=false
 [[ "${1:-}" == --check ]] && check=true
+# shellcheck source=../versions.env
+source "$repo_root/versions.env"
 
 render() {
   local output="$1" base="$2" description="$3" temporary
@@ -28,14 +30,14 @@ render() {
 }
 
 render Dockerfile \
-  'rocm/pytorch:latest' \
+  "$PYTORCH_BASE" \
   'Featherless AI ROCm development image for AMD Instinct MI325X'
 render rocm-pytorch/Dockerfile \
-  'rocm/pytorch:latest' \
+  "$PYTORCH_BASE" \
   'Featherless AI ROCm PyTorch image for AMD Instinct MI325X'
 render rocm-sgl/Dockerfile \
-  'rocm/sgl-dev:v0.5.13.post1-ubuntu24.04-py3.14-rocm7.14' \
+  "$SGL_BASE" \
   'Featherless AI ROCm SGLang image for AMD Instinct MI325X'
 render rocm-vllm/Dockerfile \
-  'rocm/vllm:rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0' \
+  "$VLLM_BASE" \
   'Featherless AI ROCm vLLM image for AMD Instinct MI325X'

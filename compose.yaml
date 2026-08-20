@@ -1,6 +1,6 @@
 services:
   gpu:
-    image: ${IMAGE:-ghcr.io/featherless-ai/rocm-pytorch:dev}
+    image: ${IMAGE:?Set IMAGE to a fully versioned image reference}
     devices:
       - /dev/kfd
       - /dev/dri
