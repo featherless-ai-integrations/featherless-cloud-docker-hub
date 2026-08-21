@@ -47,5 +47,8 @@ RUN chmod 0755 /usr/local/bin/featherless-init \
 
 WORKDIR /workspace
 EXPOSE 22 8888
+# The launcher configures sshd and must start as root. Services drop to
+# CLOUD_USER where appropriate after setup.
+USER root
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/featherless-init"]
 CMD ["run"]
