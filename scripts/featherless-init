@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 log() { printf '[featherless-init] %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
-is_true() { case "${1,,}" in 1|true|yes|on) return 0 ;; *) return 1 ;; esac; }
+is_true() { case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in 1|true|yes|on) return 0 ;; *) return 1 ;; esac; }
 
 resolve_cloud_user() {
   if is_true "${CREATE_NEW_USER:-false}"; then
@@ -184,12 +184,34 @@ serve() {
   local -a pids=()
   if is_true "${REQUIRE_MI325X:-true}"; then
     [[ -e /dev/kfd ]] || die "MI325X validation failed: /dev/kfd is not available"
-    if command -v rocm-smi >/dev/null 2>&1; then
-      rocm-smi --showproductname 2>/dev/null | grep -Eqi 'MI325X|AMD Instinct MI325' ||
-        die "MI325X validation failed: rocm-smi did not report an MI325X"
-    else
-      log "WARNING: rocm-smi is unavailable; cannot verify that the attached GPU is an MI325X"
+    mi325x_detected=false
+    for device_path in /sys/class/drm/card*/device/device; do
+      [[ -r "$device_path" ]] || continue
+      if [[ "$(<"${device_path}")" =~ ^(0x)?74a5$ ]]; then
+        mi325x_detected=true
+        break
+      fi
+    done
+    if ! is_true "$mi325x_detected"; then
+      smi_command=()
+      if command -v amd-smi >/dev/null 2>&1; then
+        smi_command=(amd-smi list)
+      elif command -v rocm-smi >/dev/null 2>&1; then
+        smi_command=(rocm-smi --showproductname)
+      fi
+      if ((${#smi_command[@]} > 0)); then
+        smi_output="$("${smi_command[@]}" 2>&1)" || smi_status=$?
+        if grep -Eqi 'MI325X|AMD Instinct MI325' <<<"$smi_output"; then
+          mi325x_detected=true
+        elif [[ -n "$smi_output" ]]; then
+          log "GPU probe failed: ${smi_output//$'\n'/; }"
+        else
+          log "GPU probe failed: ${smi_command[0]} returned no output (exit ${smi_status:-0})"
+        fi
+      fi
     fi
+    is_true "$mi325x_detected" ||
+      die "MI325X validation failed: expected PCI device 1002:74a5"
   fi
   if is_true "${ENABLE_SSH:-true}"; then
     (( EUID == 0 )) || die "sshd must be started as root"
