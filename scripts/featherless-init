@@ -102,6 +102,18 @@ PasswordAuthentication $([[ -n "${SSH_PASSWORD:-}" ]] && printf yes || printf no
 PubkeyAuthentication yes
 AllowUsers ${user}
 EOF
+  # Platform-managed keys (Featherless GPU Cloud mounts a Secret file and
+  # refreshes it in place). Read it on every login via AuthorizedKeysCommand
+  # rather than AuthorizedKeysFile: the mount directory is kubelet-owned and
+  # world-writable, which StrictModes would reject. ~/.ssh/authorized_keys
+  # keeps working alongside it.
+  if [[ -n "${FEATHERLESS_AUTHORIZED_KEYS_PATH:-}" ]]; then
+    cat >> /etc/ssh/sshd_config.d/99-featherless.conf <<EOF
+AuthorizedKeysCommand /bin/cat ${FEATHERLESS_AUTHORIZED_KEYS_PATH}
+AuthorizedKeysCommandUser nobody
+EOF
+    log "Platform authorized keys: ${FEATHERLESS_AUTHORIZED_KEYS_PATH}"
+  fi
   ssh-keygen -A
   /usr/sbin/sshd -t
 }
