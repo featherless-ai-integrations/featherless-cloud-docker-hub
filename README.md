@@ -118,6 +118,7 @@ on port 8888, set `ENABLE_JUPYTER=true`; persisted notebooks live in the
 | `SSH_PASSWORD` | empty | Enables password login when non-empty |
 | `SSH_USERS_FILE` | empty | Enables file-based multi-user SSH provisioning |
 | `SSH_AUTHORIZED_KEYS_DIR` | empty | Directory containing one public-key file per user |
+| `FEATHERLESS_AUTHORIZED_KEYS_PATH` | empty | Platform-managed `authorized_keys` file (set by Featherless GPU Cloud); read on every login in addition to `~/.ssh/authorized_keys` |
 | `SSH_LOGIN_GROUP` | `featherless-ssh` | Login allowlist group in file-based mode |
 | `ENABLE_JUPYTER` | `false` | Start JupyterLab |
 | `REQUIRE_MI325X` | `true` | Require `/dev/kfd` and verify MI325X (PCI device `1002:74a5`, with `rocm-smi` fallback) |
