@@ -247,7 +247,8 @@ serve() {
   fi
   ((${#pids[@]} > 0)) || die "no service enabled; set ENABLE_SSH=true and/or ENABLE_JUPYTER=true"
 
-  trap 'kill -TERM "${pids[@]}" 2>/dev/null || true' TERM INT
+  local shutting_down=false
+  trap 'shutting_down=true; kill -TERM "${pids[@]}" 2>/dev/null || true' TERM INT
   local status
   set +e
   wait -n "${pids[@]}"
@@ -255,6 +256,10 @@ serve() {
   set -e
   kill -TERM "${pids[@]}" 2>/dev/null || true
   wait || true
+  if [[ "$shutting_down" == true ]]; then
+    log "Shutdown complete"
+    return 0
+  fi
   return "$status"
 }
 
