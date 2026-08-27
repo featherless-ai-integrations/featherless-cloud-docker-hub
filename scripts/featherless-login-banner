@@ -1,0 +1,86 @@
+#!/bin/sh
+
+# Login shells source this file through /etc/profile.d. Keep non-interactive
+# commands and machine-readable SSH output clean.
+case "$-" in
+  *i*) ;;
+  *) return 0 2>/dev/null || exit 0 ;;
+esac
+[ -t 1 ] || return 0 2>/dev/null || exit 0
+[ "${FEATHERLESS_BANNER_SHOWN:-}" = 1 ] && return 0 2>/dev/null || true
+FEATHERLESS_BANNER_SHOWN=1
+export FEATHERLESS_BANNER_SHOWN
+
+gpu_count=0
+for render_node in /dev/dri/renderD*; do
+  [ -e "$render_node" ] && gpu_count=$((gpu_count + 1))
+done
+
+cpu_count=''
+if [ -r /sys/fs/cgroup/cpu.max ]; then
+  read -r cpu_quota cpu_period < /sys/fs/cgroup/cpu.max
+  if [ "$cpu_quota" != max ] && [ "${cpu_period:-0}" -gt 0 ] 2>/dev/null; then
+    cpu_count=$(( (cpu_quota + cpu_period - 1) / cpu_period ))
+  fi
+elif [ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us ] && \
+     [ -r /sys/fs/cgroup/cpu/cpu.cfs_period_us ]; then
+  cpu_quota=$(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us)
+  cpu_period=$(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us)
+  if [ "$cpu_quota" -gt 0 ] 2>/dev/null && [ "$cpu_period" -gt 0 ] 2>/dev/null; then
+    cpu_count=$(( (cpu_quota + cpu_period - 1) / cpu_period ))
+  fi
+fi
+[ -n "$cpu_count" ] || cpu_count=$(nproc 2>/dev/null || printf '?')
+
+memory_bytes=''
+if [ -r /sys/fs/cgroup/memory.max ]; then
+  memory_bytes=$(cat /sys/fs/cgroup/memory.max)
+elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+  memory_bytes=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
+fi
+case "$memory_bytes" in
+  ''|max|*[!0-9]*) memory_bytes=$(awk '/^MemTotal:/ { print $2 * 1024; exit }' /proc/meminfo) ;;
+esac
+memory_gib=$(awk -v bytes="$memory_bytes" 'BEGIN { printf "%.0f", bytes / 1073741824 }')
+
+workspace_info=$(findmnt -rn -T /workspace -o FSTYPE,SIZE,SOURCE 2>/dev/null | head -n 1)
+if [ -n "$workspace_info" ]; then
+  set -- $workspace_info
+  workspace_type=$1
+  workspace_size=${2:-unknown}
+  workspace_source=${3:-unknown}
+  case "$workspace_type" in
+    nfs*) workspace_label="Network volume" ;;
+    ceph|fuse.ceph) workspace_label="Volume disk" ;;
+    *) workspace_label="Container disk" ;;
+  esac
+  workspace_summary="$workspace_label · $workspace_size · $workspace_source"
+else
+  workspace_summary='Unavailable'
+fi
+
+if [ "${TERM:-dumb}" != dumb ]; then
+  accent='\033[1;33m'
+  muted='\033[0;90m'
+  reset='\033[0m'
+else
+  accent=''
+  muted=''
+  reset=''
+fi
+
+printf '%b' "$accent"
+cat <<'EOF'
+  ______          __  __               __
+ / ____/__  ____ _/ /_/ /_  ___  _____/ /__  __________
+/ /_  / _ \/ __ `/ __/ __ \/ _ \/ ___/ / _ \/ ___/ ___/
+/ __/ /  __/ /_/ / /_/ / / /  __/ /  / /  __(__  |__  )
+/_/    \___/\__,_/\__/_/ /_/\___/_/  /_/\___/____/____/
+EOF
+printf '%b%38s%b\n' "$muted" 'GPU CLOUD' "$reset"
+printf '\n%bInstance%b  %s\n' "$muted" "$reset" "$(hostname)"
+printf '%bResources%b %s AMD GPU(s) · %s vCPU · %s GiB RAM\n' \
+  "$muted" "$reset" "$gpu_count" "$cpu_count" "$memory_gib"
+printf '%bWorkspace%b %s\n' "$muted" "$reset" "$workspace_summary"
+printf '%bGPU:%b nvtop  %bROCm:%b amd-smi monitor  %bSystem:%b btop\n\n' \
+  "$muted" "$reset" "$muted" "$reset" "$muted" "$reset"

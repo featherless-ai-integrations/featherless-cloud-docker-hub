@@ -25,12 +25,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
     SSH_AUTHORIZED_KEYS_DIR= \
     SSH_LOGIN_GROUP=featherless-ssh \
     JUPYTER_ROOT_DIR=/workspace \
-    PATH=/usr/local/bin:${PATH}
+    VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:/usr/local/bin:${PATH}
 
 COPY scripts/featherless-init /usr/local/bin/featherless-init
+COPY scripts/featherless-login-banner /etc/profile.d/10-featherless-banner.sh
 RUN chmod 0755 /usr/local/bin/featherless-init \
+    && chmod 0644 /etc/profile.d/10-featherless-banner.sh \
     && case "${BASE_IMAGE}" in *mi300x*) echo "Refusing an MI300X-specific base for an MI325X image: ${BASE_IMAGE}" >&2; exit 1;; esac \
     && /usr/local/bin/featherless-init install \
+    && printf '%s\n' 'export VIRTUAL_ENV=/opt/venv' 'export PATH=/opt/venv/bin:$PATH' \
+         > /etc/profile.d/00-featherless-rocm.sh \
+    && chmod 0644 /etc/profile.d/00-featherless-rocm.sh \
     && if [ "${CREATE_NEW_USER}" = true ]; then \
          existing_group="$(getent group | awk -F: -v gid="${CLOUD_GID}" '$3 == gid { print $1; exit }')"; \
          if [ -z "$existing_group" ]; then groupadd --gid "${CLOUD_GID}" "${CLOUD_USER}"; fi; \

@@ -2,7 +2,10 @@
 
 Opinionated development images for the Featherless GPU cloud, targeting AMD
 Instinct MI325X. Each image layers SSH, [uv](https://docs.astral.sh/uv/),
-and JupyterLab over an AMD-maintained ROCm image.
+JupyterLab, and a standard monitoring/troubleshooting toolkit over an
+AMD-maintained ROCm image. `nvtop` provides the AMD equivalent of NVIDIA's
+interactive GPU process monitor; `amd-smi monitor` remains available for
+ROCm-native telemetry.
 
 | Target | AMD base | Output image |
 | --- | --- | --- |
@@ -129,6 +132,14 @@ on port 8888, set `ENABLE_JUPYTER=true`; persisted notebooks live in the
 | `CLOUD_USER` | `cloud` | Runtime user for SSH and Jupyter |
 | `CREATE_NEW_USER` | `false` | Create `CLOUD_USER`, its UID/GID, and home directory |
 
+The login environment includes `/opt/venv/bin`, where the AMD base images
+install PyTorch, `amd-smi`, and `rocm-smi`. Common interactive tools include
+`btop`, `nvtop`, `htop`, `tmux`, `jq`, `lsof`, `strace`, network diagnostics,
+and PCI/NUMA utilities.
+
+Interactive login shells show a compact Featherless banner and monitoring
+command hints. Non-interactive SSH commands do not emit the banner.
+
 If neither Jupyter credential is set, authentication is disabled and a warning is
 logged. Do that only behind a trusted network. Prefer `SSH_PUBLIC_KEY` over
 `SSH_PASSWORD`; environment variables can be visible through container tooling.
@@ -231,7 +242,7 @@ docker buildx bake --print
 ```
 
 On an ARM64 development machine, test the complete add-on layer natively with
-Podman. This substitutes a small Debian base while executing the same Dockerfile,
+Podman. This substitutes an Ubuntu 24.04 base while executing the same Dockerfile,
 installer, user creation, and entrypoint setup:
 
 ```bash
