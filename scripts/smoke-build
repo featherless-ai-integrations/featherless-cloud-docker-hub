@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 engine="${CONTAINER_ENGINE:-podman}"
-base_image="${SMOKE_BASE_IMAGE:-debian:bookworm-slim}"
+base_image="${SMOKE_BASE_IMAGE:-ubuntu:24.04}"
 image="${SMOKE_IMAGE:-localhost/featherless-mi325x-smoke:test}"
 dockerfile="${SMOKE_DOCKERFILE:-Dockerfile}"
 create_new_user="${SMOKE_CREATE_NEW_USER:-false}"
@@ -15,7 +15,10 @@ command -v "$engine" >/dev/null 2>&1 || {
 # Build natively. The production ROCm bases are amd64-only, but all operations
 # in this add-on layer are architecture-neutral and use architecture-aware apt
 # packages and uv installers.
-arch="$($engine info --format '{{.Host.Arch}}')"
+arch="$($engine info --format '{{.Host.Arch}}' 2>/dev/null || true)"
+if [[ -z "$arch" || "$arch" == '<no value>' ]]; then
+  arch="$($engine info --format '{{.Architecture}}')"
+fi
 case "$arch" in
   arm64|aarch64) platform=linux/arm64 ;;
   amd64|x86_64) platform=linux/amd64 ;;
@@ -36,7 +39,12 @@ printf 'Checking installed components\n'
   set -Eeuo pipefail
   uv --version
   jupyter lab --version
+  btop --version
+  nvtop --version
   /usr/sbin/sshd -t
+  bash --login -c '\''case "$PATH" in /opt/venv/bin:*) ;; *) exit 1;; esac'\''
+  test -r /etc/profile.d/10-featherless-banner.sh
+  test -z "$(bash --login -c true)"
   if [[ "${CREATE_NEW_USER:-false}" == true ]]; then
     test "$(id -u cloud)" = 1000
   else
