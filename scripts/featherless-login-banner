@@ -43,18 +43,17 @@ case "$memory_bytes" in
 esac
 memory_gib=$(awk -v bytes="$memory_bytes" 'BEGIN { printf "%.0f", bytes / 1073741824 }')
 
-workspace_info=$(findmnt -rn -T /workspace -o FSTYPE,SIZE,SOURCE 2>/dev/null | head -n 1)
+workspace_info=$(findmnt -rn -T /workspace -o FSTYPE,SIZE 2>/dev/null | head -n 1)
 if [ -n "$workspace_info" ]; then
   set -- $workspace_info
   workspace_type=$1
   workspace_size=${2:-unknown}
-  workspace_source=${3:-unknown}
   case "$workspace_type" in
     nfs*) workspace_label="Network volume" ;;
     ceph|fuse.ceph) workspace_label="Volume disk" ;;
     *) workspace_label="Container disk" ;;
   esac
-  workspace_summary="$workspace_label · $workspace_size · $workspace_source"
+  workspace_summary="$workspace_label · $workspace_size · /workspace"
 else
   workspace_summary='Unavailable'
 fi
@@ -71,10 +70,10 @@ fi
 
 printf '%b' "$accent"
 cat <<'EOF'
-  ______          __  __               __
- / ____/__  ____ _/ /_/ /_  ___  _____/ /__  __________
-/ /_  / _ \/ __ `/ __/ __ \/ _ \/ ___/ / _ \/ ___/ ___/
-/ __/ /  __/ /_/ / /_/ / / /  __/ /  / /  __(__  |__  )
+    ______          __  __               __
+   / ____/__  ____ _/ /_/ /_  ___  _____/ /__  __________
+  / /_  / _ \/ __ `/ __/ __ \/ _ \/ ___/ / _ \/ ___/ ___/
+ / __/ /  __/ /_/ / /_/ / / /  __/ /  / /  __(__  |__  )
 /_/    \___/\__,_/\__/_/ /_/\___/_/  /_/\___/____/____/
 EOF
 printf '%b%38s%b\n' "$muted" 'GPU CLOUD' "$reset"
