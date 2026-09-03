@@ -15,7 +15,7 @@ resolve_cloud_user() {
 
 usage() {
   cat <<'EOF'
-Usage: featherless-init COMMAND [SERVICE]
+Usage: featherless-init COMMAND [SERVICE] [-- PROGRAM [ARG...]]
 
 Commands:
   start [all|ssh|jupyter]  Install missing components, then start services
@@ -24,9 +24,10 @@ Commands:
   help                     Show this help
 
 With no command, "run" is used and the ENABLE_* defaults are respected.
-Pass "all" explicitly to enable both services. Configuration is supplied through the
-environment; see README.md for SSH_PUBLIC_KEY, SSH_PASSWORD, JUPYTER_TOKEN,
-ports, user, and GPU validation options.
+Pass "all" explicitly to enable both services. A program after "--" runs as a
+supervised workload alongside the enabled services. Configuration is supplied
+through the environment; see README.md for SSH_PUBLIC_KEY, SSH_PASSWORD,
+JUPYTER_TOKEN, ports, user, and GPU validation options.
 EOF
 }
 
@@ -247,7 +248,11 @@ serve() {
     log "Starting JupyterLab on port ${JUPYTER_PORT:-8888}"
     run_as_cloud_user jupyter "${args[@]}" & pids+=("$!")
   fi
-  ((${#pids[@]} > 0)) || die "no service enabled; set ENABLE_SSH=true and/or ENABLE_JUPYTER=true"
+  if (($# > 0)); then
+    log "Starting custom command"
+    "$@" & pids+=("$!")
+  fi
+  ((${#pids[@]} > 0)) || die "no service or custom command enabled"
 
   local shutting_down=false
   trap 'shutting_down=true; kill -TERM "${pids[@]}" 2>/dev/null || true' TERM INT
@@ -269,15 +274,27 @@ case "${1:-run}" in
   install) install_components ;;
   start)
     shift || true
-    select_services "${1:-}"
+    if [[ "${1:-}" == -- ]]; then
+      select_services ''
+    else
+      select_services "${1:-}"
+      [[ -z "${1:-}" ]] || shift
+    fi
+    [[ "${1:-}" != -- ]] || shift
     components_available || install_components
-    serve
+    serve "$@"
     ;;
   run|serve)
     shift || true
-    select_services "${1:-}"
-    serve
+    if [[ "${1:-}" == -- ]]; then
+      select_services ''
+    else
+      select_services "${1:-}"
+      [[ -z "${1:-}" ]] || shift
+    fi
+    [[ "${1:-}" != -- ]] || shift
+    serve "$@"
     ;;
   help|-h|--help) usage ;;
-  *) exec "$@" ;;
+  *) serve "$@" ;;
 esac
