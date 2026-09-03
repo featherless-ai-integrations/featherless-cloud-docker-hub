@@ -122,6 +122,9 @@ on port 8888, set `ENABLE_JUPYTER=true`; persisted notebooks live in the
 | `SSH_USERS_FILE` | empty | Enables file-based multi-user SSH provisioning |
 | `SSH_AUTHORIZED_KEYS_DIR` | empty | Directory containing one public-key file per user |
 | `FEATHERLESS_AUTHORIZED_KEYS_PATH` | empty | Platform-managed `authorized_keys` file (set by Featherless GPU Cloud); read on every login in addition to `~/.ssh/authorized_keys` |
+| `FEATHERLESS_GPU_COUNT` | detected | Platform-assigned GPU count used by the login banner |
+| `FEATHERLESS_COST_PER_HOUR_USD` | empty | Human-readable hourly instance cost used by the login banner |
+| `FEATHERLESS_STORAGE_JSON` | empty | Customer-visible storage names, capacities, and mount paths used by the login banner |
 | `SSH_LOGIN_GROUP` | `featherless-ssh` | Login allowlist group in file-based mode |
 | `ENABLE_JUPYTER` | `false` | Start JupyterLab |
 | `REQUIRE_MI325X` | `true` | Require `/dev/kfd` and verify MI325X (PCI device `1002:74a5`, with `rocm-smi` fallback) |
@@ -137,8 +140,8 @@ install PyTorch, `amd-smi`, and `rocm-smi`. Common interactive tools include
 `btop`, `nvtop`, `htop`, `tmux`, `jq`, `lsof`, `strace`, network diagnostics,
 and PCI/NUMA utilities.
 
-Interactive login shells show a compact Featherless banner and monitoring
-command hints. Non-interactive SSH commands do not emit the banner.
+Interactive login shells show a compact Featherless resource summary.
+Non-interactive SSH commands do not emit the banner.
 
 If neither Jupyter credential is set, authentication is disabled and a warning is
 logged. Do that only behind a trusted network. Prefer `SSH_PUBLIC_KEY` over
