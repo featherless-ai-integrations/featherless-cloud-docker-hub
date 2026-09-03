@@ -143,6 +143,14 @@ and PCI/NUMA utilities.
 Interactive login shells show a compact Featherless resource summary.
 Non-interactive SSH commands do not emit the banner.
 
+Commands supplied after the image name run alongside platform services. The
+stable wrapper interface is `featherless-init run -- PROGRAM [ARG...]`. The
+image entrypoint must remain intact so `featherless-init` can configure SSH,
+start enabled services, supervise the custom command, and stop the remaining
+processes when any supervised process exits. Future custom images must either
+provide this compatibility entrypoint or use a platform-injected equivalent;
+preserving an arbitrary image entrypoint cannot guarantee platform services.
+
 If neither Jupyter credential is set, authentication is disabled and a warning is
 logged. Do that only behind a trusted network. Prefer `SSH_PUBLIC_KEY` over
 `SSH_PASSWORD`; environment variables can be visible through container tooling.
