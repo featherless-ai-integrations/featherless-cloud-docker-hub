@@ -1,33 +1,36 @@
-# Featherless Cloud AMD images
+# Featherless Cloud images
 
 Opinionated development images for the Featherless GPU cloud, targeting AMD
-Instinct MI325X. Each image layers SSH, [uv](https://docs.astral.sh/uv/),
+Instinct MI325X. The ROCm images layer SSH, [uv](https://docs.astral.sh/uv/),
 JupyterLab, and a standard monitoring/troubleshooting toolkit over an
 AMD-maintained ROCm image. `nvtop` provides the AMD equivalent of NVIDIA's
 interactive GPU process monitor; `amd-smi monitor` remains available for
 ROCm-native telemetry.
 
-| Target | AMD base | Output image |
+| Target | Base | Output image |
 | --- | --- | --- |
 | `pytorch` | `rocm/pytorch` | `rocm-pytorch` |
 | `sgl-dev` | `rocm/sgl-dev` | `rocm-sgl` |
 | `vllm` | `rocm/vllm` | `rocm-vllm` |
+| `core-lxcfs` | Ubuntu 24.04 | `core-lxcfs` |
 
 Each output has a dedicated Docker Hub Autobuild Dockerfile:
 
 ```text
-rocm-pytorch/Dockerfile
-rocm-sgl/Dockerfile
-rocm-vllm/Dockerfile
+docker-image/rocm-pytorch/Dockerfile
+docker-image/rocm-sgl/Dockerfile
+docker-image/rocm-vllm/Dockerfile
+docker-image/core-lxcfs/Dockerfile
 ```
 
 Configure each Docker Hub build rule with **Build context `/`** and its matching
-**Dockerfile location** above. The root context is required because every image
-copies the shared `scripts/featherless-init` lifecycle script. Suggested Docker
-Hub repositories are `rocm-pytorch`, `rocm-sgl`, and `rocm-vllm`.
+**Dockerfile location** above. The root context is required because the ROCm images
+copy the shared `scripts/featherless-init` lifecycle script. Suggested Docker
+Hub repositories are `rocm-pytorch`, `rocm-sgl`, `rocm-vllm`, and `core-lxcfs`.
 
-All Dockerfiles are generated from the canonical `templates/rocm.Dockerfile`;
-only the base image and OCI description differ. After changing the common image
+ROCm Dockerfiles are generated from `templates/rocm.Dockerfile`;
+`core-lxcfs` uses `templates/core-lxcfs.Dockerfile`. The root Dockerfile remains
+a compatibility entrypoint for the PyTorch image. After changing the common image
 layer or an upstream default, regenerate and verify them with:
 
 ```bash
@@ -55,7 +58,7 @@ Build one variant or override an upstream image:
 
 ```bash
 docker buildx bake pytorch --load
-docker build --file rocm-pytorch/Dockerfile \
+docker build --file docker-image/rocm-pytorch/Dockerfile \
   --build-arg BASE_IMAGE=rocm/pytorch@sha256:... \
   --tag localhost/rocm-pytorch:override .
 ```
@@ -69,7 +72,7 @@ the three large ROCm builds do not share a runner or its local storage.
 
 Configure the GitHub repository with:
 
-- Secret `DOCKERHUB_USERNAME` — account allowed to push the three repositories.
+- Secret `DOCKERHUB_USERNAME` — account allowed to push all four repositories.
 - Secret `DOCKERHUB_TOKEN` — Docker Hub access token, not an account password.
 - Optional repository variable `CREATE_NEW_USER=true` — create `CLOUD_USER`
   instead of retaining the upstream image's current account.
@@ -81,19 +84,43 @@ The current pinned version tags are derived from `versions.env`:
 | `rocm-pytorch` | `rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0` |
 | `rocm-sgl` | `sglang0.5.17-rocm7.2.0-mi30x-20260819` |
 | `rocm-vllm` | `rocm7.14.0-ubuntu24.04-py3.14-pytorch2.11.0-vllm0.23.0` |
+| `core-lxcfs` | `5.0.4-ubuntu24.04` |
 
-All upstream bases are pulled from AMD's `rocm/*` Docker Hub namespace. The
+ROCm bases come from AMD's `rocm/*` Docker Hub namespace; `core-lxcfs` uses
+a digest-pinned official Ubuntu base. The
 resulting Featherless images are published to the separate `featherlesscloud/*`
 namespace.
 
 Each image job explicitly pulls two ordinary images into its runner's Docker
-image store: the digest-pinned AMD source and the existing complete-version
+image store: the digest-pinned source and the existing complete-version
 Featherless image, when that output already exists. The latter is passed to
 `docker build --cache-from`; inline cache metadata travels inside the normal
 built image rather than a separate cache artifact or floating `buildcache` tag.
 If the source, Dockerfile, build arguments, and copied files are unchanged, the
 package-installation step is reused. The first publication of a stack version
 has no existing output image and builds normally.
+
+## LXCFS node-service image
+
+`core-lxcfs` is a platform infrastructure image, not a customer GPU template.
+It contains LXCFS, FUSE tools, `nsenter`, `mountpoint`, and `timeout`; it has no
+ROCm, SSH, or Jupyter dependency. The Ubuntu base digest and LXCFS package version
+are pinned in `versions.env`. Other apt dependencies are resolved during build;
+deploy the resulting image by digest.
+
+```bash
+VERSION=5.0.4-ubuntu24.04 REGISTRY=featherlesscloud \
+  docker buildx bake core-lxcfs --load
+docker run --rm featherlesscloud/core-lxcfs:5.0.4-ubuntu24.04 --version
+```
+
+The release workflow includes this image and checks its executable dependencies.
+Publishing still requires a main-branch push, release tag, or manual workflow.
+Building this image does not deploy LXCFS. The GPU Cloud repository owns the
+DaemonSet at `deploy/lxcfs/daemonset.yaml`; supply its `LXCFS_IMAGE` using the
+published digest. Privileges and host mounts belong in that platform manifest.
+Do not run a second daemon over an existing LXCFS mount. Validate daemon lifecycle
+and CPU/memory views on a disposable worker before attaching customer Pods.
 
 ## Run on an MI325X host
 
@@ -160,7 +187,7 @@ To create the configured cloud account instead, build with:
 
 ```bash
 docker build --build-arg CREATE_NEW_USER=true \
-  --file rocm-pytorch/Dockerfile --tag my-image .
+  --file docker-image/rocm-pytorch/Dockerfile --tag my-image .
 ```
 
 When disabled, the build skips `groupadd` and `useradd`, uses the current
@@ -260,7 +287,7 @@ installer, user creation, and entrypoint setup:
 ./scripts/smoke-build
 
 # Test a Docker Hub-specific Dockerfile:
-SMOKE_DOCKERFILE=rocm-pytorch/Dockerfile ./scripts/smoke-build
+SMOKE_DOCKERFILE=docker-image/rocm-pytorch/Dockerfile ./scripts/smoke-build
 ```
 
 Set `CONTAINER_ENGINE=docker` to use Docker instead. The smoke build validates

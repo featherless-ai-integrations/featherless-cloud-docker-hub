@@ -9,11 +9,12 @@ check=false
 source "$repo_root/versions.env"
 
 render() {
-  local output="$1" base="$2" description="$3" temporary
+  local output="$1" base="$2" description="$3" source_template="${4:-$template}" temporary
   temporary="$(mktemp)"
   sed -e "s|@@BASE_IMAGE@@|${base}|g" \
       -e "s|@@DESCRIPTION@@|${description}|g" \
-      "$template" > "$temporary"
+      -e "s|@@LXCFS_PACKAGE_VERSION@@|${LXCFS_PACKAGE_VERSION}|g" \
+      "$source_template" > "$temporary"
 
   if $check; then
     if ! cmp -s "$temporary" "$repo_root/$output"; then
@@ -32,12 +33,17 @@ render() {
 render Dockerfile \
   "$PYTORCH_BASE" \
   'Featherless AI ROCm development image for AMD Instinct MI325X'
-render rocm-pytorch/Dockerfile \
+render docker-image/rocm-pytorch/Dockerfile \
   "$PYTORCH_BASE" \
   'Featherless AI ROCm PyTorch image for AMD Instinct MI325X'
-render rocm-sgl/Dockerfile \
+render docker-image/rocm-sgl/Dockerfile \
   "$SGL_BASE" \
   'Featherless AI ROCm SGLang image for AMD Instinct MI325X'
-render rocm-vllm/Dockerfile \
+render docker-image/rocm-vllm/Dockerfile \
   "$VLLM_BASE" \
   'Featherless AI ROCm vLLM image for AMD Instinct MI325X'
+
+render docker-image/core-lxcfs/Dockerfile \
+  "$LXCFS_BASE" \
+  "Featherless Cloud LXCFS node service" \
+  "$repo_root/templates/core-lxcfs.Dockerfile"
