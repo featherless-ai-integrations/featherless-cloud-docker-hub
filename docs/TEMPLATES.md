@@ -13,7 +13,7 @@ authoring reference. Keep the two in sync.
 ## Layout
 
 ```
-rocm-pytorch/
+docker-image/rocm-pytorch/
   Dockerfile
   icon.svg        # optional brand mark shown on the catalog card and admin list
   template.yaml   # one entry per published image tag
@@ -61,7 +61,7 @@ bumping the schema version.
 
 ## Example
 
-`rocm-pytorch/template.yaml`:
+`docker-image/rocm-pytorch/template.yaml`:
 
 ```yaml
 schemaVersion: 1

@@ -12,8 +12,11 @@ jq -nc \
   --arg sgls "$SGL_BASE" \
   --arg vllm "$VLLM_IMAGE_TAG" \
   --arg vllms "$VLLM_BASE" \
+  --arg lxcfs "$LXCFS_IMAGE_TAG" \
+  --arg lxcfss "$LXCFS_BASE" \
   '{include: [
     {target:"pytorch", repository:"rocm-pytorch", version:$pt, source:$pts},
     {target:"sgl-dev", repository:"rocm-sgl", version:$sgl, source:$sgls},
-    {target:"vllm", repository:"rocm-vllm", version:$vllm, source:$vllms}
+    {target:"vllm", repository:"rocm-vllm", version:$vllm, source:$vllms},
+    {target:"core-lxcfs", repository:"core-lxcfs", version:$lxcfs, source:$lxcfss}
   ]}'

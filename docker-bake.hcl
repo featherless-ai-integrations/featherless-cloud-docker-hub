@@ -1,7 +1,7 @@
 variable "REGISTRY" { default = "localhost/featherless-ai" }
 variable "VERSION" { default = "local" }
 
-group "default" { targets = ["pytorch", "sgl-dev", "vllm"] }
+group "default" { targets = ["pytorch", "sgl-dev", "vllm", "core-lxcfs"] }
 
 target "common" {
   context = "."
@@ -15,16 +15,24 @@ target "common" {
 
 target "pytorch" {
   inherits = ["common"]
-  dockerfile = "rocm-pytorch/Dockerfile"
+  dockerfile = "docker-image/rocm-pytorch/Dockerfile"
   tags = ["${REGISTRY}/rocm-pytorch:${VERSION}"]
 }
 target "sgl-dev" {
   inherits = ["common"]
-  dockerfile = "rocm-sgl/Dockerfile"
+  dockerfile = "docker-image/rocm-sgl/Dockerfile"
   tags = ["${REGISTRY}/rocm-sgl:${VERSION}"]
 }
 target "vllm" {
   inherits = ["common"]
-  dockerfile = "rocm-vllm/Dockerfile"
+  dockerfile = "docker-image/rocm-vllm/Dockerfile"
   tags = ["${REGISTRY}/rocm-vllm:${VERSION}"]
+}
+
+# Infrastructure image deliberately does not inherit GPU labels.
+target "core-lxcfs" {
+  context = "."
+  dockerfile = "docker-image/core-lxcfs/Dockerfile"
+  platforms = ["linux/amd64"]
+  tags = ["${REGISTRY}/core-lxcfs:${VERSION}"]
 }

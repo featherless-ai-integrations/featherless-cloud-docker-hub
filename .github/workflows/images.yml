@@ -56,7 +56,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Pull pinned AMD source image
+      - name: Pull pinned source image
         run: docker pull --platform linux/amd64 '${{ matrix.source }}'
 
       - name: Pull existing built image when available
@@ -89,10 +89,24 @@ jobs:
             "${cache_args[@]}" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --label 'org.opencontainers.image.version=${{ matrix.version }}' \
-            --file '${{ matrix.repository }}/Dockerfile' \
+            --file 'docker-image/${{ matrix.repository }}/Dockerfile' \
             --tag "$BUILT_IMAGE" \
             --tag "$SHA_IMAGE" \
             .
+
+      - name: Check LXCFS image tools
+        if: matrix.target == 'core-lxcfs'
+        env:
+          BUILT_IMAGE: ${{ env.OUTPUT_NAMESPACE }}/${{ matrix.repository }}:${{ matrix.version }}
+        run: |
+          docker run --rm "$BUILT_IMAGE" --version
+          docker run --rm --entrypoint /bin/sh "$BUILT_IMAGE" -ec '
+            command -v nsenter
+            command -v mountpoint
+            command -v timeout
+            command -v fusermount3
+            lxcfs --help 2>&1 | grep -q -- --enable-cfs
+          '
 
       - name: Publish ${{ matrix.repository }}
         if: env.SHOULD_PUSH == 'true'
