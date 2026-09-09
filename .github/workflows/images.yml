@@ -41,6 +41,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Reclaim Axolotl build space on disposable hosted runner
+        if: matrix.target == 'axolotl'
+        run: |
+          # The pinned AMD runtime already exceeds the runner's default free disk.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          docker image prune --all --force
+          df -h /
+          free -h
+
       - name: Require Docker Hub configuration for publishing
         if: env.SHOULD_PUSH == 'true'
         env:
@@ -61,6 +71,8 @@ jobs:
 
       - name: Pull existing built image when available
         id: existing
+        # Avoid retaining a second native-extension layer during the large build.
+        if: matrix.target != 'axolotl'
         env:
           BUILT_IMAGE: ${{ env.OUTPUT_NAMESPACE }}/${{ matrix.repository }}:${{ matrix.version }}
         run: |
@@ -78,8 +90,15 @@ jobs:
           CACHE_FOUND: ${{ steps.existing.outputs.found }}
         run: |
           cache_args=()
-          if [[ "$CACHE_FOUND" == true ]]; then
+          if [[ '${{ matrix.target }}' == axolotl ]]; then
+            # Import inline cache metadata without eagerly pulling the old image.
+            cache_args+=(--cache-from "type=registry,ref=$BUILT_IMAGE")
+          elif [[ "$CACHE_FOUND" == true ]]; then
             cache_args+=(--cache-from "$BUILT_IMAGE")
+          fi
+          build_args=()
+          if [[ '${{ matrix.target }}' == axolotl ]]; then
+            build_args+=(--build-arg MAX_JOBS=2)
           fi
           docker build \
             --platform linux/amd64 \
@@ -87,6 +106,7 @@ jobs:
             --build-arg BUILDKIT_INLINE_CACHE=1 \
             --build-arg "CREATE_NEW_USER=$CREATE_NEW_USER" \
             "${cache_args[@]}" \
+            "${build_args[@]}" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --label 'org.opencontainers.image.version=${{ matrix.version }}' \
             --file 'docker-image/${{ matrix.repository }}/Dockerfile' \
@@ -107,6 +127,18 @@ jobs:
             command -v fusermount3
             lxcfs --help 2>&1 | grep -q -- --enable-cfs
           '
+
+      - name: Check Axolotl lifecycle and environment without a GPU
+        if: matrix.target == 'axolotl'
+        env:
+          BUILT_IMAGE: ${{ env.OUTPUT_NAMESPACE }}/${{ matrix.repository }}:${{ matrix.version }}
+        run: |
+          docker run --rm \
+            -e REQUIRE_MI325X=false -e ENABLE_SSH=false -e ENABLE_JUPYTER=false \
+            -e CLOUD_USER=root \
+            "$BUILT_IMAGE" run -- /usr/local/bin/axolotl-doctor --metadata-only
+          docker run --rm --entrypoint /usr/local/bin/axolotl-workspace \
+            "$BUILT_IMAGE" --help
 
       - name: Publish ${{ matrix.repository }}
         if: env.SHOULD_PUSH == 'true'

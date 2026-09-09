@@ -1,0 +1,72 @@
+# 16K-context LoRA SFT on real long-document conversations.
+# Axolotl v0.18.0; candidate MI325X/gfx942 recipe, not a GPU-support claim.
+# Run axolotl-workspace, then cd /workspace/axolotl (or your chosen destination).
+# axolotl preprocess long-context-sft.yaml
+# axolotl train long-context-sft.yaml --launcher python
+# Public immutable assets download only on these explicit commands.
+# Paths are relative to your working directory, not this YAML's directory.
+# Use a new output_dir for a fresh experiment; preserve checkpoints when resuming.
+# 16384 stays within Qwen2.5-0.5B's native context; no unvalidated RoPE scaling.
+# LongAlign includes 8K-64K examples. Axolotl filters samples beyond sequence_len;
+# inspect preprocess statistics (including assistant labels) before training.
+# The 128-row split limits training samples, NOT the upstream JSON download size.
+# Budget several GB of dataset/cache space; larger contexts increase activation RAM.
+# This trains long-input SFT; packing alone does not create long-context ability.
+base_model: Qwen/Qwen2.5-0.5B-Instruct
+revision_of_model: 7ae557604adf67be50417f59c2c2f167def9a775
+trust_remote_code: false
+chat_template: tokenizer_default
+datasets:
+  - path: zai-org/LongAlign-10k
+    revision: 12f17c4baff1001f0d44c4f8feab09ee2ee8c6dc
+    type: chat_template
+    field_messages: messages
+    roles_to_train: [assistant]
+    split: train[:128]
+adapter: lora
+load_in_4bit: false
+load_in_8bit: false
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_linear: true
+# Qwen2 dense text layers support these Liger Triton kernels.
+plugins:
+  - axolotl.integrations.liger.LigerPlugin
+liger_rope: true
+liger_rms_norm: true
+liger_glu_activation: true
+# Exactly one CE patch: do not also enable flash-attn/torch/Unsloth CE patches.
+liger_cross_entropy: false
+liger_fused_linear_cross_entropy: true
+dataset_prepared_path: ./prepared/long-context-sft
+output_dir: ./outputs/long-context-sft
+val_set_size: 0.0
+sequence_len: 16384
+sample_packing: true
+pad_to_sequence_len: true
+# Packing relies on the image's ROCm FlashAttention-2 build; do not silently use SDPA.
+attn_implementation: flash_attention_2
+micro_batch_size: 1
+gradient_accumulation_steps: 2
+num_epochs: 1
+# Small functional starting run, not a throughput or convergence benchmark.
+max_steps: 10
+learning_rate: 0.0002
+optimizer: adamw_torch
+lr_scheduler: cosine
+warmup_steps: 2
+weight_decay: 0.01
+max_grad_norm: 1.0
+bf16: true
+fp16: false
+tf32: false
+train_on_inputs: false
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+logging_steps: 1
+save_steps: 10
+save_total_limit: 2
+save_safetensors: true
+seed: 42

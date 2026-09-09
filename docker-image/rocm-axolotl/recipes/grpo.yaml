@@ -1,0 +1,79 @@
+# Single-GPU BF16 LoRA GRPO with native Transformers generation.
+# Axolotl v0.18.0; candidate MI325X/gfx942 recipe, not a GPU-support claim.
+# Run axolotl-workspace, then cd /workspace/axolotl (or your chosen destination).
+# axolotl preprocess grpo.yaml
+# axolotl train grpo.yaml --launcher python
+# Public immutable assets download only on these explicit commands.
+# Paths are relative to your working directory, not this YAML's directory.
+# Use a new output_dir for a fresh experiment; preserve checkpoints when resuming.
+# Default runnable GRPO path: no vLLM dependency or external service required.
+# AxolotlGRPOTrainer delegates to TRL's standard Transformers generate() branch.
+# Keep grpo_rewards.py in the current directory; it formats GSM8K without gold leakage.
+# Effective batch = 1 x 2 x 1 GPU = 2, divisible by num_generations: 2.
+# Reward is exact final numeric answer plus a small formatting bonus; not math equivalence.
+# A short run demonstrates mechanics, not improved reasoning quality.
+# No SFT fused-linear CE patch: GRPO computes its own token-logprob loss.
+base_model: Qwen/Qwen2.5-0.5B-Instruct
+revision_of_model: 7ae557604adf67be50417f59c2c2f167def9a775
+trust_remote_code: false
+chat_template: tokenizer_default
+rl: grpo
+skip_prepare_dataset: true
+remove_unused_columns: false
+datasets:
+  - path: openai/gsm8k
+    revision: 740312add88f781978c0658806c59bc2815b9866
+    name: main
+    split: train[:128]
+    type: grpo_rewards.prompt_transform
+adapter: lora
+load_in_4bit: false
+load_in_8bit: false
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_linear: true
+trl:
+  use_vllm: false
+  beta: 0.01
+  num_generations: 2
+  max_completion_length: 256
+  temperature: 0.8
+  top_p: 0.95
+  use_liger_loss: false
+  reward_funcs:
+    - grpo_rewards.accuracy_reward
+    - grpo_rewards.format_reward
+  reward_weights: [1.0, 0.1]
+  log_completions: false
+dataset_prepared_path: ./prepared/grpo
+output_dir: ./outputs/grpo
+val_set_size: 0.0
+sequence_len: 1024
+sample_packing: false
+pad_to_sequence_len: false
+# Packing relies on the image's ROCm FlashAttention-2 build; do not silently use SDPA.
+attn_implementation: flash_attention_2
+micro_batch_size: 1
+gradient_accumulation_steps: 2
+num_epochs: 1
+# Small functional starting run, not a throughput or convergence benchmark.
+max_steps: 10
+learning_rate: 0.000005
+optimizer: adamw_torch
+lr_scheduler: cosine
+warmup_steps: 2
+weight_decay: 0.01
+max_grad_norm: 1.0
+bf16: true
+fp16: false
+tf32: false
+train_on_inputs: false
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+logging_steps: 1
+save_steps: 10
+save_total_limit: 2
+save_safetensors: true
+seed: 42

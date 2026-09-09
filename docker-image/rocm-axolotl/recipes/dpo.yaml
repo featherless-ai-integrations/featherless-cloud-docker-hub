@@ -1,0 +1,70 @@
+# Single-GPU BF16 LoRA preference tuning with chosen/rejected pairs.
+# Axolotl v0.18.0; candidate MI325X/gfx942 recipe, not a GPU-support claim.
+# Run axolotl-workspace, then cd /workspace/axolotl (or your chosen destination).
+# axolotl preprocess dpo.yaml
+# axolotl train dpo.yaml --launcher python
+# Public immutable assets download only on these explicit commands.
+# Paths are relative to your working directory, not this YAML's directory.
+# Use a new output_dir for a fresh experiment; preserve checkpoints when resuming.
+# The frozen base (adapter disabled) is the DPO reference; do not merge before training.
+# DPO needs per-token logits: no SFT fused-linear CE patch or sample packing.
+base_model: Qwen/Qwen2.5-0.5B-Instruct
+revision_of_model: 7ae557604adf67be50417f59c2c2f167def9a775
+trust_remote_code: false
+chat_template: qwen_25
+rl: dpo
+trl:
+  beta: 0.1
+datasets:
+  - path: fozziethebeat/alpaca_messages_2k_dpo_test
+    revision: ea82cff7ddd858f2ffb948400c82eaffda67c319
+    split: train
+    type: chat_template.default
+    field_messages: conversation
+    field_chosen: chosen
+    field_rejected: rejected
+    message_property_mappings:
+      role: role
+      content: content
+    roles:
+      system: [system]
+      user: [user]
+      assistant: [assistant]
+adapter: lora
+load_in_4bit: false
+load_in_8bit: false
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_linear: true
+dataset_prepared_path: ./prepared/dpo
+output_dir: ./outputs/dpo
+val_set_size: 0.0
+sequence_len: 2048
+sample_packing: false
+pad_to_sequence_len: false
+# Packing relies on the image's ROCm FlashAttention-2 build; do not silently use SDPA.
+attn_implementation: flash_attention_2
+micro_batch_size: 1
+gradient_accumulation_steps: 4
+num_epochs: 1
+# Small functional starting run, not a throughput or convergence benchmark.
+max_steps: 20
+learning_rate: 0.000005
+optimizer: adamw_torch
+lr_scheduler: cosine
+warmup_steps: 2
+weight_decay: 0.01
+max_grad_norm: 1.0
+bf16: true
+fp16: false
+tf32: false
+train_on_inputs: false
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+logging_steps: 1
+save_steps: 20
+save_total_limit: 2
+save_safetensors: true
+seed: 42

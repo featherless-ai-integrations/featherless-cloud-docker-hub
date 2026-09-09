@@ -1,0 +1,9 @@
+# Supplied by the digest-pinned ROCm base, never resolved from PyPI.
+torch
+torchvision
+torchaudio
+triton
+pytorch-triton-rocm
+flash-attn
+# Built separately against that exact base by install-axolotl.
+deepspeed

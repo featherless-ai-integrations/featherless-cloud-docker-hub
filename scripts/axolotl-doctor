@@ -1,0 +1,130 @@
+#!/opt/venv/bin/python
+"""Explicit image diagnostics. Nothing is run by container startup."""
+import argparse
+import importlib
+import importlib.metadata
+import json
+import os
+from pathlib import Path
+import platform
+import subprocess
+import sys
+import tempfile
+
+PACKAGES = {
+    "torch": "torch", "axolotl": "axolotl", "transformers": "transformers",
+    "accelerate": "accelerate", "peft": "peft", "datasets": "datasets",
+    "bitsandbytes": "bitsandbytes", "flash-attn": "flash_attn",
+    "liger-kernel": "liger_kernel", "triton": "triton", "deepspeed": "deepspeed",
+    "jupyterlab": "jupyterlab",
+}
+
+
+def probe(args):
+    failures = []
+    report = {"python": sys.version, "executable": sys.executable,
+              "platform": platform.platform(), "packages": {}, "paths": {}}
+    build_info = Path("/opt/axolotl-build-info.json")
+    if build_info.is_file():
+        try:
+            report["image_build"] = json.loads(build_info.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            report["image_build_error"] = str(exc)
+            failures.append("build metadata")
+    for distribution, module in PACKAGES.items():
+        item = {}
+        try:
+            item["version"] = importlib.metadata.version(distribution)
+            if not args.metadata_only:
+                importlib.import_module(module)
+                item["import"] = "ok"
+        except Exception as exc:
+            item["error"] = f"{type(exc).__name__}: {exc}"
+            failures.append(distribution)
+        report["packages"][distribution] = item
+    for label, directory in {
+        "workspace": args.workspace,
+        "hf_cache": os.environ.get("HF_HOME", str(Path.home() / ".cache/huggingface")),
+        "triton_cache": os.environ.get("TRITON_CACHE_DIR", str(Path.home() / ".triton/cache")),
+    }.items():
+        path = Path(directory).expanduser()
+        # Never create configured directories or change ownership. Probe the nearest
+        # existing parent when a cache has not been populated yet.
+        parent = path
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+        item = {"configured": str(path), "probed": str(parent), "exists": path.is_dir()}
+        try:
+            if label == "workspace" and not path.is_dir():
+                raise RuntimeError("workspace does not exist or is not a directory")
+            with tempfile.TemporaryFile(dir=parent) as handle:
+                handle.write(b"axolotl-doctor\n")
+                handle.flush()
+            item["writable"] = True
+        except Exception as exc:
+            item.update(writable=False, error=f"{type(exc).__name__}: {exc}")
+            failures.append(label)
+        report["paths"][label] = item
+    try:
+        import torch
+        report["torch"] = {"version": torch.__version__, "hip": torch.version.hip,
+                           "cuda_build": torch.version.cuda}
+        if not args.metadata_only:
+            report["torch"]["gpu_available"] = torch.cuda.is_available()
+            report["devices"] = []
+            for index in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(index)
+                report["devices"].append({"index": index, "name": props.name,
+                    "architecture": getattr(props, "gcnArchName", None),
+                    "memory_bytes": props.total_memory})
+        if args.gpu_check:
+            if not torch.version.hip or not torch.cuda.is_available():
+                raise RuntimeError("GPU check requires a visible ROCm GPU")
+            for device in range(torch.cuda.device_count()):
+                torch.manual_seed(17)
+                a = torch.randn(64, 64, device=f"cuda:{device}", requires_grad=True)
+                b = torch.randn(64, 64, device=f"cuda:{device}", requires_grad=True)
+                expected = a.detach().cpu() @ b.detach().cpu()
+                actual = a @ b
+                torch.testing.assert_close(actual.cpu(), expected, rtol=1e-4, atol=1e-4)
+                actual.square().mean().backward()
+                for tensor in (a, b):
+                    if tensor.grad is None or not torch.isfinite(tensor.grad).all() or not tensor.grad.abs().sum() > 0:
+                        raise RuntimeError("matmul gradient is missing, non-finite, or zero")
+                torch.cuda.synchronize(device)
+            report["gpu_check"] = "PASS: FP32 matmul/reference and backward on every visible GPU"
+    except Exception as exc:
+        report["gpu_error"] = f"{type(exc).__name__}: {exc}"
+        failures.append("torch/GPU")
+    report["failures"] = failures
+    report["scope"] = "metadata only; no GPU acceptance" if args.metadata_only else "diagnostics; use verify-axolotl for training acceptance"
+    print(json.dumps(report, indent=2), flush=True)
+    return bool(failures)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--metadata-only", action="store_true", help="Versions and writable paths; no optional imports or GPU initialization")
+    parser.add_argument("--gpu-check", action="store_true", help="Explicitly run small matmul/backward checks on each visible ROCm GPU")
+    parser.add_argument("--workspace", default="/workspace")
+    parser.add_argument("--timeout", type=int, default=180, help="Diagnostic subprocess deadline in seconds (default: 180)")
+    parser.add_argument("--_probe", action="store_true", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.metadata_only and args.gpu_check:
+        parser.error("--metadata-only and --gpu-check are mutually exclusive")
+    if args.timeout < 1:
+        parser.error("--timeout must be positive")
+    if args._probe:
+        return probe(args)
+    child_env = dict(os.environ, AXOLOTL_DO_NOT_TRACK="1", DO_NOT_TRACK="1",
+                     HF_HUB_OFFLINE="1", HF_DATASETS_OFFLINE="1", HF_HUB_DISABLE_IMPLICIT_TOKEN="1")
+    try:
+        return subprocess.run([sys.executable, str(Path(__file__).resolve()), *sys.argv[1:], "--_probe"],
+                              env=child_env, timeout=args.timeout, check=False).returncode
+    except subprocess.TimeoutExpired:
+        print("axolotl-doctor: diagnostic timed out", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

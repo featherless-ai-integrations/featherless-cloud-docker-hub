@@ -1,0 +1,86 @@
+# OPTIONAL / NOT RUNNABLE IN THE STOCK IMAGE: remote vLLM GRPO prerequisite recipe.
+# Use grpo.yaml for the supported dependency path (native Transformers generation).
+# TRL 1.8.0's VLLMClient imports local vLLM PyNcclCommunicator/StatelessProcessGroup
+# even in server mode. A remote HTTP endpoint alone cannot remove that dependency.
+# This image intentionally does not install a CUDA vLLM wheel or alter its ROCm Torch.
+# Prerequisite: separately build and verify a matching ROCm vLLM CLIENT environment
+# and a matching TRL 1.8.0 vllm-serve SERVER environment, preserving this Torch ABI.
+# The service must implement TRL generation AND weight sync, NOT OpenAI vllm serve.
+# Use distinct training/server GPUs, reachable HTTP 8000 and weight-sync port 51216,
+# compatible ROCm/RCCL transport, and a trusted isolated network (no exposed auth).
+# Start this only on the separately provisioned server, not inside this stock image:
+# trl vllm-serve --model Qwen/Qwen2.5-0.5B-Instruct --revision 7ae557604adf67be50417f59c2c2f167def9a775 --dtype bfloat16 --host 0.0.0.0 --port 8000 --max-model-len 2048
+# Then, in the matching client environment and workspace:
+# axolotl train grpo-remote-vllm.yaml --launcher python
+# Change trl.vllm_server_host below to your reachable server hostname; 127.0.0.1
+# is only appropriate when its HTTP service shares this network namespace.
+# These are actual pinned-source fields; no unsupported base_url/HTTP fallback.
+# The model/data/reward settings below are standalone, not YAML inheritance.
+base_model: Qwen/Qwen2.5-0.5B-Instruct
+revision_of_model: 7ae557604adf67be50417f59c2c2f167def9a775
+trust_remote_code: false
+chat_template: tokenizer_default
+rl: grpo
+skip_prepare_dataset: true
+remove_unused_columns: false
+datasets:
+  - path: openai/gsm8k
+    revision: 740312add88f781978c0658806c59bc2815b9866
+    name: main
+    split: train[:128]
+    type: grpo_rewards.prompt_transform
+adapter: lora
+load_in_4bit: false
+load_in_8bit: false
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_linear: true
+trl:
+  use_vllm: true
+  vllm_mode: server
+  vllm_server_host: 127.0.0.1
+  vllm_server_port: 8000
+  vllm_server_timeout: 300
+  beta: 0.01
+  num_generations: 2
+  max_completion_length: 256
+  temperature: 0.8
+  top_p: 0.95
+  use_liger_loss: false
+  reward_funcs:
+    - grpo_rewards.accuracy_reward
+    - grpo_rewards.format_reward
+  reward_weights: [1.0, 0.1]
+  log_completions: false
+dataset_prepared_path: ./prepared/grpo-remote-vllm
+output_dir: ./outputs/grpo-remote-vllm
+val_set_size: 0.0
+sequence_len: 1024
+sample_packing: false
+pad_to_sequence_len: false
+# Packing relies on the image's ROCm FlashAttention-2 build; do not silently use SDPA.
+attn_implementation: flash_attention_2
+micro_batch_size: 1
+gradient_accumulation_steps: 2
+num_epochs: 1
+# Small functional starting run, not a throughput or convergence benchmark.
+max_steps: 10
+learning_rate: 0.000005
+optimizer: adamw_torch
+lr_scheduler: cosine
+warmup_steps: 2
+weight_decay: 0.01
+max_grad_norm: 1.0
+bf16: true
+fp16: false
+tf32: false
+train_on_inputs: false
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+logging_steps: 1
+save_steps: 10
+save_total_limit: 2
+save_safetensors: true
+seed: 42

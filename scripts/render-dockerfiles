@@ -9,12 +9,16 @@ check=false
 source "$repo_root/versions.env"
 
 render() {
-  local output="$1" base="$2" description="$3" source_template="${4:-$template}" temporary
+  local output="$1" base="$2" description="$3" temporary
+  local -a source_templates=("${4:-$template}")
+  [[ -z "${5:-}" ]] || source_templates+=("$5")
   temporary="$(mktemp)"
   sed -e "s|@@BASE_IMAGE@@|${base}|g" \
       -e "s|@@DESCRIPTION@@|${description}|g" \
       -e "s|@@LXCFS_PACKAGE_VERSION@@|${LXCFS_PACKAGE_VERSION}|g" \
-      "$source_template" > "$temporary"
+      -e "s|@@AXOLOTL_COMMIT@@|${AXOLOTL_COMMIT}|g" \
+      -e "s|@@AXOLOTL_VERSION@@|${AXOLOTL_VERSION}|g" \
+      "${source_templates[@]}" > "$temporary"
 
   if $check; then
     if ! cmp -s "$temporary" "$repo_root/$output"; then
@@ -42,6 +46,11 @@ render docker-image/rocm-sgl/Dockerfile \
 render docker-image/rocm-vllm/Dockerfile \
   "$VLLM_BASE" \
   'Featherless AI ROCm vLLM image for AMD Instinct MI325X'
+render docker-image/rocm-axolotl/Dockerfile \
+  "$AXOLOTL_BASE" \
+  'Featherless Cloud Axolotl ROCm training image for AMD Instinct MI325X' \
+  "$template" \
+  "$repo_root/templates/axolotl.Dockerfile"
 
 render docker-image/core-lxcfs/Dockerfile \
   "$LXCFS_BASE" \

@@ -1,0 +1,66 @@
+# Single-GPU Qwen2.5-VL-3B language-layer BF16 LoRA.
+# Axolotl v0.18.0; candidate MI325X/gfx942 recipe, not a GPU-support claim.
+# Run axolotl-workspace, then cd /workspace/axolotl (or your chosen destination).
+# axolotl preprocess vlm-lora.yaml
+# axolotl train vlm-lora.yaml --launcher python
+# Public immutable assets download only on these explicit commands.
+# Paths are relative to your working directory, not this YAML's directory.
+# Use a new output_dir for a fresh experiment; preserve checkpoints when resuming.
+# Real image/chat pairs. The 32-row split limits training, not shard download size.
+# Do NOT preprocess VLMs into text-only tokens: skip_prepare_dataset keeps images.
+# Image decode/processor dependencies and ROCm attention require runtime verification.
+# No packing or Liger CE patch: multimodal loss/collation follows upstream's VLM path.
+base_model: Qwen/Qwen2.5-VL-3B-Instruct
+revision_of_model: 66285546d2b821cf421d4f5eb2576359d3770cd3
+trust_remote_code: false
+processor_type: AutoProcessor
+processor_kwargs:
+  min_pixels: 3136
+  max_pixels: 200704
+skip_prepare_dataset: true
+remove_unused_columns: false
+chat_template: qwen2_vl
+datasets:
+  - path: HuggingFaceH4/llava-instruct-mix-vsft
+    revision: 4c04c8302cb25a9c7ee48d2dfda99308d432f87c
+    type: chat_template
+    split: train[:32]
+adapter: lora
+load_in_4bit: false
+load_in_8bit: false
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+# Native v0.18.0 Qwen2.5-VL example regex; excludes vision encoder/projection.
+lora_target_modules: 'model.language_model.layers.[\d]+.(mlp|cross_attn|self_attn).(up|down|gate|q|k|v|o)_proj'
+dataset_prepared_path: ./prepared/vlm-lora
+output_dir: ./outputs/vlm-lora
+val_set_size: 0.0
+sequence_len: 4096
+sample_packing: false
+pad_to_sequence_len: false
+# Packing relies on the image's ROCm FlashAttention-2 build; do not silently use SDPA.
+attn_implementation: flash_attention_2
+micro_batch_size: 1
+gradient_accumulation_steps: 4
+num_epochs: 1
+# Small functional starting run, not a throughput or convergence benchmark.
+max_steps: 10
+learning_rate: 0.0002
+optimizer: adamw_torch
+lr_scheduler: cosine
+warmup_steps: 2
+weight_decay: 0.01
+max_grad_norm: 1.0
+bf16: true
+fp16: false
+tf32: false
+train_on_inputs: false
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+logging_steps: 1
+save_steps: 10
+save_total_limit: 2
+save_safetensors: true
+seed: 42

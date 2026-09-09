@@ -1,0 +1,68 @@
+# Two-GPU FSDP2 full-parameter BF16 fine-tuning.
+# Axolotl v0.18.0; candidate MI325X/gfx942 recipe, not a GPU-support claim.
+# Run axolotl-workspace, then cd /workspace/axolotl (or your chosen destination).
+# axolotl preprocess fsdp2.yaml
+# axolotl train fsdp2.yaml -- --multi_gpu --num_processes 2
+# Public immutable assets download only on these explicit commands.
+# Paths are relative to your working directory, not this YAML's directory.
+# Use a new output_dir for a fresh experiment; preserve checkpoints when resuming.
+# Requires at least two visible GPUs and functioning RCCL collectives.
+# Change --num_processes to match your visible GPU allocation, never oversubscribe.
+# Effective batch = 1 microbatch x 4 accumulation x number of training GPUs.
+base_model: Qwen/Qwen2.5-0.5B-Instruct
+revision_of_model: 7ae557604adf67be50417f59c2c2f167def9a775
+trust_remote_code: false
+datasets:
+  - path: mhenrichsen/alpaca_2k_test
+    revision: d05c1cb585e462b16532a44314aa4859cb7450c6
+    type: alpaca
+    split: train
+# Qwen2 dense text layers support these Liger Triton kernels.
+plugins:
+  - axolotl.integrations.liger.LigerPlugin
+liger_rope: true
+liger_rms_norm: true
+liger_glu_activation: true
+# Exactly one CE patch: do not also enable flash-attn/torch/Unsloth CE patches.
+liger_cross_entropy: false
+liger_fused_linear_cross_entropy: true
+dataset_prepared_path: ./prepared/fsdp2
+output_dir: ./outputs/fsdp2
+val_set_size: 0.0
+sequence_len: 2048
+sample_packing: true
+pad_to_sequence_len: true
+# Packing relies on the image's ROCm FlashAttention-2 build; do not silently use SDPA.
+attn_implementation: flash_attention_2
+micro_batch_size: 1
+gradient_accumulation_steps: 4
+num_epochs: 1
+# Small functional starting run, not a throughput or convergence benchmark.
+max_steps: 20
+learning_rate: 0.00002
+optimizer: adamw_torch
+lr_scheduler: cosine
+warmup_steps: 2
+weight_decay: 0.01
+max_grad_norm: 1.0
+bf16: true
+fp16: false
+tf32: false
+train_on_inputs: false
+gradient_checkpointing: false
+logging_steps: 1
+save_steps: 20
+save_total_limit: 2
+save_safetensors: true
+seed: 42
+# FSDP2 activation checkpointing replaces model gradient checkpointing.
+fsdp_version: 2
+fsdp_config:
+  version: 2
+  auto_wrap_policy: TRANSFORMER_BASED_WRAP
+  transformer_layer_cls_to_wrap: Qwen2DecoderLayer
+  state_dict_type: FULL_STATE_DICT
+  reshard_after_forward: true
+  offload_params: false
+  cpu_ram_efficient_loading: false
+  activation_checkpointing: true

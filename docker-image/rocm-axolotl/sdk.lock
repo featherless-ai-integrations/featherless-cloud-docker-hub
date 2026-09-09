@@ -1,0 +1,3 @@
+# Match the runtime SDK already embedded in the digest-pinned AMD base.
+rocm-sdk-devel @ https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_devel-7.14.0-py3-none-linux_x86_64.whl \
+    --hash=sha256:eb6ddd6fdf9f5db4bbb7f55e3556d1935f38dd6ad56defff97a3e6d5efd35f5b
