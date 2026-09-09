@@ -12,6 +12,7 @@ ROCm-native telemetry.
 | `pytorch` | `rocm/pytorch` | `rocm-pytorch` |
 | `sgl-dev` | `rocm/sgl-dev` | `rocm-sgl` |
 | `vllm` | `rocm/vllm` | `rocm-vllm` |
+| `axolotl` | `rocm/pytorch` + pinned Axolotl | `rocm-axolotl` |
 | `core-lxcfs` | Ubuntu 24.04 | `core-lxcfs` |
 
 Each output has a dedicated Docker Hub Autobuild Dockerfile:
@@ -20,16 +21,19 @@ Each output has a dedicated Docker Hub Autobuild Dockerfile:
 docker-image/rocm-pytorch/Dockerfile
 docker-image/rocm-sgl/Dockerfile
 docker-image/rocm-vllm/Dockerfile
+docker-image/rocm-axolotl/Dockerfile
 docker-image/core-lxcfs/Dockerfile
 ```
 
 Configure each Docker Hub build rule with **Build context `/`** and its matching
 **Dockerfile location** above. The root context is required because the ROCm images
 copy the shared `scripts/featherless-init` lifecycle script. Suggested Docker
-Hub repositories are `rocm-pytorch`, `rocm-sgl`, `rocm-vllm`, and `core-lxcfs`.
+Hub repositories are `rocm-pytorch`, `rocm-sgl`, `rocm-vllm`, `rocm-axolotl`,
+and `core-lxcfs`.
 
-ROCm Dockerfiles are generated from `templates/rocm.Dockerfile`;
-`core-lxcfs` uses `templates/core-lxcfs.Dockerfile`. The root Dockerfile remains
+ROCm Dockerfiles are generated from `templates/rocm.Dockerfile`; Axolotl also
+appends `templates/axolotl.Dockerfile`. `core-lxcfs` uses
+`templates/core-lxcfs.Dockerfile`. The root Dockerfile remains
 a compatibility entrypoint for the PyTorch image. After changing the common image
 layer or an upstream default, regenerate and verify them with:
 
@@ -68,11 +72,11 @@ publishing. Pushes to `main`, version tags, and manual dispatches publish each
 repository to Docker Hub with a complete stack-version tag and immutable
 `sha-<commit>` tag. No `latest`, `stable`, or partially versioned aliases are
 published. Each matrix entry runs on a separate GitHub-hosted Ubuntu runner, so
-the three large ROCm builds do not share a runner or its local storage.
+the four large ROCm builds do not share a runner or its local storage.
 
 Configure the GitHub repository with:
 
-- Secret `DOCKERHUB_USERNAME` — account allowed to push all four repositories.
+- Secret `DOCKERHUB_USERNAME` — account allowed to push all five repositories.
 - Secret `DOCKERHUB_TOKEN` — Docker Hub access token, not an account password.
 - Optional repository variable `CREATE_NEW_USER=true` — create `CLOUD_USER`
   instead of retaining the upstream image's current account.
@@ -84,6 +88,7 @@ The current pinned version tags are derived from `versions.env`:
 | `rocm-pytorch` | `rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0` |
 | `rocm-sgl` | `sglang0.5.17-rocm7.2.0-mi30x-20260819` |
 | `rocm-vllm` | `rocm7.14.0-ubuntu24.04-py3.14-pytorch2.11.0-vllm0.23.0` |
+| `rocm-axolotl` | `axolotl0.18.0-rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0` |
 | `core-lxcfs` | `5.0.4-ubuntu24.04` |
 
 ROCm bases come from AMD's `rocm/*` Docker Hub namespace; `core-lxcfs` uses
@@ -91,14 +96,114 @@ a digest-pinned official Ubuntu base. The
 resulting Featherless images are published to the separate `featherlesscloud/*`
 namespace.
 
-Each image job explicitly pulls two ordinary images into its runner's Docker
-image store: the digest-pinned source and the existing complete-version
-Featherless image, when that output already exists. The latter is passed to
+Image jobs pull the digest-pinned source and, except for Axolotl, the existing
+complete-version Featherless image when available. The latter is passed to
 `docker build --cache-from`; inline cache metadata travels inside the normal
 built image rather than a separate cache artifact or floating `buildcache` tag.
-If the source, Dockerfile, build arguments, and copied files are unchanged, the
-package-installation step is reused. The first publication of a stack version
-has no existing output image and builds normally.
+Unchanged package-installation layers can then be reused.
+
+The Axolotl job uses a standard hosted runner, removes unused Android/.NET/Haskell
+and cached hosted toolchains before pulling, skips the second image pull, and
+imports inline cache metadata directly from the published image through
+BuildKit's registry cache importer. Native extensions compile with `MAX_JOBS=2`
+to conserve RAM. This makes cold builds slower while still reusing unchanged
+published layers. The AMD base alone occupies about 28 GB unpacked; runner
+image changes and dependency growth can still require a larger runner. The job
+checks the real entrypoint and Axolotl metadata before publishing
+`featherlesscloud/rocm-axolotl:<complete-stack-version>` and
+`featherlesscloud/rocm-axolotl:sha-<commit>`. CPU CI does not certify GPU kernels.
+
+## Axolotl training workspace
+
+The Axolotl image preserves the shared MI325X guard, SSH/Jupyter lifecycle, and
+`featherless-init` entrypoint. Boot does not download models, start training, or
+compile extensions. Its independent base digest and Axolotl release commit are
+pinned in `versions.env`; Python dependencies and native source artifacts are
+hash-locked under `docker-image/rocm-axolotl/`.
+
+The stack includes ROCm PyTorch 2.12, Axolotl 0.18.0, Transformers/PEFT/TRL,
+Liger's Triton kernels, CK FlashAttention 2.8.3 compiled for `gfx942`,
+bitsandbytes 0.50.2 with its ROCm 7.14 native library, and DeepSpeed 0.18.6 with
+prebuilt CPUAdam/FusedAdam. The ROCm development SDK is initialized at `/opt/rocm`
+for custom HIP extensions. Build-time checks reject replacement of inherited
+Torch/vision/audio/Triton binaries and NVIDIA runtime dependencies.
+`/opt/axolotl-build-info.json` records the installed versions and build choices.
+
+To resolve an intentional dependency update (using uv 0.9.30):
+
+```bash
+uv pip compile docker-image/rocm-axolotl/requirements.in \
+  --excludes docker-image/rocm-axolotl/base-packages.txt \
+  --python-version 3.12 --python-platform x86_64-unknown-linux-gnu \
+  --generate-hashes --no-annotate --no-header \
+  --output-file docker-image/rocm-axolotl/requirements.lock
+```
+
+Excluded base packages must not also be direct requirements: uv retains explicit
+root requirements even when excluded transitively. Rebuild and rerun MI325X
+acceptance after changing a lock, source commit, patch, or base.
+
+```bash
+docker build --file docker-image/rocm-axolotl/Dockerfile \
+  --build-arg MAX_JOBS=8 --tag featherlesscloud/rocm-axolotl:local .
+```
+
+Choose compiler parallelism for the builder's RAM; this does not limit training.
+Run the image through the same Compose configuration below, changing `IMAGE` to
+the complete `rocm-axolotl` tag. Inside the container:
+
+```bash
+axolotl-doctor --gpu-check
+axolotl-workspace /workspace/axolotl
+cd /workspace/axolotl
+axolotl preprocess lora-bf16.yaml
+axolotl train lora-bf16.yaml --launcher python
+```
+
+`axolotl-workspace` copies bundled recipes only on request and preserves existing
+files and symlinks. Initialization downloads nothing; preprocessing/training
+downloads the public model and dataset revisions named in each recipe. Run from
+the copied directory so relative datasets, outputs, reward modules, and DeepSpeed
+configuration paths resolve. HF, Triton, and TorchInductor caches default to
+`/workspace/.cache`; the mounted workspace must be writable by the training user.
+
+Recipes cover BF16 LoRA, NF4 QLoRA, full fine-tuning, FSDP2, DeepSpeed ZeRO-2,
+long-context SFT, DPO, GRPO, and vision-language LoRA. Read their comments and
+adapt model, data, sequence length, batch size, and launch topology before a real
+run. They are short training examples, not throughput-tuned production jobs.
+Model-specific fused-kernel support still applies.
+
+Default GRPO uses Transformers generation. Local vLLM, CUDA-only xFormers, and
+NVIDIA-specific Liger backends are deliberately not installed. The remote-vLLM
+recipe is conditional: TRL also needs its compatible local vLLM communicator,
+which is not part of this image. A remote server alone does not enable it.
+Do not install a CUDA vLLM wheel into the protected ROCm environment.
+
+Explicit offline acceptance commands use tiny random local Llama weights and
+synthetic data, without tokens or network downloads:
+
+```bash
+axolotl-doctor --metadata-only                  # CPU-safe inventory
+verify-axolotl --output /workspace/check-single # new directory; retained logs
+verify-axolotl --mode multi --gpus 2 \
+  --output /workspace/check-multi
+```
+
+Single mode checks LoRA, real NF4 QLoRA, full training with FlashAttention/Liger,
+checkpoint resume, merge/reload/generation, and fused forward/backward numerical
+agreement. Multi mode checks RCCL collectives and FSDP2 training. Use `--checks`
+to select workloads and `--help` for deadlines and artifact retention. These are
+correctness checks, not performance benchmarks; passing them does not validate
+every bundled model, trainer, optimizer, or multi-node topology.
+
+The pinned 0.18.0 stack's exported image passed the complete offline suite on
+physical MI325X hardware: single-GPU training plus two-GPU RCCL/FSDP2. All eight
+visible devices passed the doctor's matmul/backward check. Additional smoke
+workloads verified CPUAdam/FusedAdam updates against PyTorch AdamW, TorchCodec
+CPU video decoding, workspace preservation, and the real tini/Featherless
+entrypoint. Local validation used PRoot over the unpacked image, not a Docker
+daemon or a live GitHub Actions publication. DPO/GRPO/VLM recipes, eight-way
+distributed training, and multi-node execution were not exercised by that run.
 
 ## LXCFS node-service image
 
@@ -293,3 +398,5 @@ SMOKE_DOCKERFILE=docker-image/rocm-pytorch/Dockerfile ./scripts/smoke-build
 Set `CONTAINER_ENGINE=docker` to use Docker instead. The smoke build validates
 the portable add-on layer; final ROCm images still need an AMD64 build and an
 MI325X runtime test before release.
+This Ubuntu-base substitution does not cover Axolotl's training extension:
+build that target with its pinned AMD64 ROCm base and run `verify-axolotl` instead.

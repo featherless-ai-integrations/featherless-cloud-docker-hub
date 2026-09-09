@@ -1,0 +1,17 @@
+schemaVersion: 1
+name: Axolotl (ROCm)
+description: Axolotl training workspace for AMD MI325X with Liger, ROCm FlashAttention, LoRA/QLoRA, distributed training tools, SSH, and optional JupyterLab.
+image: featherlesscloud/rocm-axolotl
+icon: icon.svg
+startupCommand: ""
+environment: []
+bootstrapVersion: "1"
+versions:
+  - version: "0.18.0"
+    tag: axolotl0.18.0-rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0
+    metadata:
+      rocmVersion: "7.14"
+      pytorchVersion: "2.12.0"
+      pythonVersion: "3.12"
+      gpuModel: MI325X
+      axolotlCommit: 2f5cb9da62a0fe763a1ddeb7798fc9acb2f4a417

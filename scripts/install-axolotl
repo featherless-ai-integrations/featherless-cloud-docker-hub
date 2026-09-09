@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# Build-time only. Never invoked by the runtime launcher.
+set -euo pipefail
+
+readonly python=/opt/venv/bin/python
+readonly assets=/opt/featherless/axolotl
+readonly source=/opt/axolotl
+readonly flash_commit=060c9188beec3a8b62b33a3bfa6d5d2d44975fab
+readonly expected_commit=2f5cb9da62a0fe763a1ddeb7798fc9acb2f4a417
+: "${AXOLOTL_COMMIT:?AXOLOTL_COMMIT must be the reviewed upstream commit}"
+[[ "$AXOLOTL_COMMIT" == "$expected_commit" ]] || {
+    echo 'Axolotl source changed: regenerate the metadata patch and dependency lock first.' >&2
+    exit 1
+}
+[[ "$EUID" == 0 && -x "$python" ]] || {
+    echo 'Run as root after the inherited /opt/venv has been initialized.' >&2
+    exit 1
+}
+export PATH="/opt/venv/bin:${PATH}"
+export PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_INPUT=1 PIP_NO_CACHE_DIR=1
+export MAX_JOBS="${MAX_JOBS:-8}"
+export PYTORCH_ROCM_ARCH=gfx942 GPU_ARCHS=gfx942
+export FLASH_ATTENTION_TRITON_AMD_ENABLE=FALSE
+
+build_dir="$(mktemp -d /tmp/axolotl-build.XXXXXXXX)"
+trap 'rm -rf "$build_dir"' EXIT
+export AXOLOTL_BUILD_DIR="$build_dir"
+
+# Record immutable-base packages before touching the environment. --no-deps on
+# every installation prevents pip from substituting PyPI's CUDA Torch/Triton.
+"$python" - <<'PY'
+import hashlib
+import importlib.metadata as md
+import json
+import os
+from pathlib import Path
+import re
+import sys
+import torch
+from packaging.version import Version
+
+if sys.version_info[:2] != (3, 12) or not torch.version.hip:
+    raise SystemExit('Expected Python 3.12 and the ROCm PyTorch base')
+if not Version('2.11.0') <= Version(torch.__version__.split('+')[0]) <= Version('2.12.1'):
+    raise SystemExit(f'Axolotl 0.18.0 does not support base Torch {torch.__version__}')
+protected = {}
+for name in ('torch', 'torchvision', 'torchaudio', 'triton', 'pytorch-triton-rocm'):
+    try:
+        dist = md.distribution(name)
+    except md.PackageNotFoundError:
+        if name in ('triton', 'pytorch-triton-rocm'):
+            continue
+        raise
+    protected[name] = {
+        'version': dist.version,
+        'location': str(dist.locate_file('')),
+        'record_sha256': hashlib.sha256((dist.read_text('RECORD') or '').encode()).hexdigest(),
+    }
+if 'triton' not in protected:
+    raise SystemExit('Base must provide the real triton distribution, not only a differently named package')
+if Version(protected['triton']['version']) < Version('3.4.0'):
+    raise SystemExit('Axolotl requires inherited Triton >=3.4.0')
+for line in Path('/opt/featherless/axolotl/requirements.lock').read_text().splitlines():
+    if not line or line[0].isspace() or line.startswith('#'):
+        continue
+    name = re.split(r'[= @\[;]', line, maxsplit=1)[0].lower().replace('_', '-')
+    if name in protected or name in ('flash-attn', 'deepspeed', 'xformers', 'vllm') or name.startswith('nvidia-') and name != 'nvidia-ml-py':
+        raise SystemExit(f'Forbidden runtime dependency in lock: {name}')
+Path(os.environ['AXOLOTL_BUILD_DIR'], 'base.json').write_text(json.dumps(protected, indent=2))
+PY
+
+# Recent AMD images package the runtime as a relocatable Python SDK. The base
+# has hipcc wrappers but not the merged development tree required by C++ builds.
+"$python" -m pip install --no-deps --require-hashes --only-binary=:all: -r "$assets/sdk.lock"
+/opt/venv/bin/rocm-sdk init
+sdk_root="$(/opt/venv/bin/rocm-sdk path --root)"
+[[ -d "$sdk_root/include/hip" && -x "$sdk_root/bin/hipcc" ]]
+ln -s "$sdk_root" /opt/rocm
+printf '%s\n' /opt/rocm/lib > /etc/ld.so.conf.d/featherless-rocm.conf
+ldconfig
+export ROCM_HOME=/opt/rocm ROCM_PATH=/opt/rocm HIP_PATH=/opt/rocm
+export PATH="/opt/rocm/bin:$PATH"
+
+# All transitive versions/artifact hashes are frozen. No isolated build backend
+# may download a second Torch or an unpinned build tool.
+"$python" -m pip install --no-deps --require-hashes --only-binary=:all: -r "$assets/bootstrap.lock"
+"$python" -m pip install --no-deps --require-hashes --no-build-isolation -r "$assets/requirements.lock"
+
+# xFormers' mandatory NVIDIA-oriented wheel is not necessary for SDPA/CK/Liger.
+# bitsandbytes 0.50.2 is the release shipping a ROCm 7.14 native library; 0.49.1
+# does not provide that release's supported wheel. No runtime code is stubbed.
+git init "$source"
+git -C "$source" remote add origin https://github.com/axolotl-ai-cloud/axolotl.git
+git -C "$source" fetch --depth 1 origin "$AXOLOTL_COMMIT"
+git -C "$source" checkout --detach FETCH_HEAD
+git -C "$source" apply "$assets/axolotl-rocm.patch"
+"$python" -m pip install --no-deps --no-build-isolation "$source"
+
+# Keep the image vendor's ABI-matched CK build when present. A broken or old
+# installed build is an error, not a silent fallback. Only absence triggers a
+# source build pinned together with its gitlink-pinned CK/CUTLASS submodules.
+if "$python" - <<'PY'
+import importlib.metadata as md
+import sys
+try:
+    md.version('flash-attn')
+except md.PackageNotFoundError:
+    sys.exit(1)
+PY
+then
+    echo 'Preserving FlashAttention from the digest-pinned ROCm base.'
+    flash_source=base
+else
+    echo "Building FlashAttention 2.8.3 CK at $flash_commit for gfx942."
+    flash_source=source
+    git init "$build_dir/flash-attention"
+    git -C "$build_dir/flash-attention" remote add origin https://github.com/Dao-AILab/flash-attention.git
+    git -C "$build_dir/flash-attention" fetch --depth 1 origin "$flash_commit"
+    git -C "$build_dir/flash-attention" checkout --detach FETCH_HEAD
+    git -C "$build_dir/flash-attention" submodule update --init --depth 1 csrc/composable_kernel csrc/cutlass
+    BUILD_TARGET=rocm FLASH_ATTENTION_FORCE_BUILD=TRUE \
+        "$python" -m pip install --no-deps --no-build-isolation "$build_dir/flash-attention"
+fi
+export AXOLOTL_FLASH_SOURCE="$flash_source" AXOLOTL_FLASH_COMMIT="$flash_commit"
+
+# Build only the ROCm-supported training optimizers, rather than DS_BUILD_OPS=1
+# or the CUDA-only deepspeed-kernels extra. Other DS ops remain upstream JIT.
+DS_ACCELERATOR=cuda DS_BUILD_OPS=0 DS_BUILD_CPU_ADAM=1 DS_BUILD_FUSED_ADAM=1 \
+    DS_ENABLE_NINJA=1 "$python" -m pip install --no-deps --no-build-isolation \
+    --require-hashes -r "$assets/deepspeed.lock"
+
+"$python" -m ipykernel install --prefix=/opt/venv --name=axolotl --display-name='Axolotl ROCm (/opt/venv)'
+"$python" -m pip check
+"$python" - <<'PY'
+import ctypes
+import hashlib
+import importlib.metadata as md
+import json
+import os
+from pathlib import Path
+from packaging.version import Version
+import torch
+import triton
+import flash_attn
+import flash_attn_2_cuda
+import bitsandbytes
+from deepspeed.git_version_info import installed_ops
+
+protected = json.loads(Path(os.environ['AXOLOTL_BUILD_DIR'], 'base.json').read_text())
+for name, original in protected.items():
+    dist = md.distribution(name)
+    current = {
+        'version': dist.version,
+        'location': str(dist.locate_file('')),
+        'record_sha256': hashlib.sha256((dist.read_text('RECORD') or '').encode()).hexdigest(),
+    }
+    if current != original:
+        raise SystemExit(f'Protected base package changed: {name}')
+if Version(md.version('flash-attn')) < Version('2.8.3'):
+    raise SystemExit('FlashAttention >=2.8.3 is required')
+# No GPU is required while building. bitsandbytes intentionally loads its CPU
+# library without a visible device, so load the exact HIP artifact directly.
+# ctypes symbol lookup cannot be satisfied by bnb's deferred-error wrapper.
+hip_major, hip_minor = torch.version.hip.split('.')[:2]
+bnb_native = ctypes.CDLL(str(Path(bitsandbytes.__file__).parent / f'libbitsandbytes_rocm{hip_major}{hip_minor}.so'))
+getattr(bnb_native, 'cdequantize_blockwise_fp32')
+getattr(bnb_native, 'cdequantize_blockwise_fp16_nf4')
+if not all(installed_ops.get(name) for name in ('cpu_adam', 'fused_adam')):
+    raise SystemExit('DeepSpeed did not build both requested training optimizer extensions')
+info = {
+    'axolotl_commit': os.environ['AXOLOTL_COMMIT'],
+    'flash_attention': {
+        'source': os.environ['AXOLOTL_FLASH_SOURCE'],
+        'version': md.version('flash-attn'),
+        'commit': os.environ['AXOLOTL_FLASH_COMMIT'] if os.environ['AXOLOTL_FLASH_SOURCE'] == 'source' else None,
+        'backend': 'ck',
+    },
+    'protected_packages': protected,
+    'package_versions': {d.metadata['Name']: d.version for d in md.distributions() if d.metadata['Name']},
+    'patches': ['xformers mandatory dependency removed', 'bitsandbytes 0.49.1 -> 0.50.2'],
+    'gpu_validation': 'not performed during image build; run verify-axolotl explicitly',
+}
+Path('/opt/axolotl-build-info.json').write_text(json.dumps(info, indent=2, sort_keys=True) + '\n')
+PY

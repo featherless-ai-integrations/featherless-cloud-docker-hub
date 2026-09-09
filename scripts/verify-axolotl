@@ -1,0 +1,475 @@
+#!/opt/venv/bin/python
+"""Offline ROCm acceptance with tiny random Llama weights and real Axolotl training.
+
+No downloaded models, credentials, startup hooks, or pre-existing output are used.
+Single: LoRA, NF4 QLoRA, full FT, resume, merge/reload, Liger, FlashAttention.
+Multi: RCCL all-reduce and FSDP2 full FT; requires at least two visible GPUs.
+This is correctness acceptance, not a performance benchmark or model-quality test.
+"""
+import argparse
+import json
+import math
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+SINGLE_CHECKS = ("lora", "qlora", "full", "resume", "merge", "liger", "flash")
+MULTI_CHECKS = ("collective", "fsdp2")
+
+
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+
+
+def dump(path, value):
+    Path(path).write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+
+
+def gpu():
+    import torch
+    require(torch.version.hip is not None, "this acceptance command requires ROCm PyTorch, not CUDA/CPU PyTorch")
+    require(torch.cuda.is_available(), "no ROCm GPU visible; expose /dev/kfd and /dev/dri and the render/video groups")
+    torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
+    torch.manual_seed(17)
+    return torch
+
+
+def prepare(root):
+    import torch
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
+
+    torch.manual_seed(17)
+    vocabulary = {word: index for index, word in enumerate(
+        ["<pad>", "<unk>", "<s>", "</s>"] + [f"word{i}" for i in range(124)])}
+    backend = Tokenizer(WordLevel(vocabulary, unk_token="<unk>"))
+    backend.pre_tokenizer = Whitespace()
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, pad_token="<pad>",
+        unk_token="<unk>", bos_token="<s>", eos_token="</s>", model_max_length=128)
+    base = root / "base"
+    tokenizer.save_pretrained(base)
+    model = LlamaForCausalLM(LlamaConfig(vocab_size=128, hidden_size=128,
+        intermediate_size=256, num_hidden_layers=2, num_attention_heads=4,
+        num_key_value_heads=2, max_position_embeddings=128, attention_dropout=0.0,
+        bos_token_id=2, eos_token_id=3, pad_token_id=0, tie_word_embeddings=False))
+    model.save_pretrained(base, safe_serialization=True)
+    dataset_dir = root / "data"
+    dataset_dir.mkdir()
+    with (dataset_dir / "train.jsonl").open("w", encoding="utf-8") as stream:
+        for row in range(64):
+            text = " ".join(f"word{(row + offset) % 124}" for offset in range(24))
+            stream.write(json.dumps({"text": text}) + "\n")
+    # The completion strategy exercises real Axolotl dataset tokenization without
+    # relying on external chat templates or instruction datasets.
+    config = {
+        "base_model": str(base), "model_type": "LlamaForCausalLM",
+        "tokenizer_type": "AutoTokenizer", "trust_remote_code": False,
+        "datasets": [{"path": str(dataset_dir), "ds_type": "json",
+                      "data_files": [str(dataset_dir / "train.jsonl")], "type": "completion", "field": "text"}],
+        "dataset_prepared_path": str(root / "prepared"), "dataset_num_proc": 1,
+        "val_set_size": 0, "sequence_len": 64, "sample_packing": False,
+        "pad_to_sequence_len": True, "micro_batch_size": 1,
+        "gradient_accumulation_steps": 1, "num_epochs": 1, "max_steps": 2,
+        "optimizer": "adamw_torch", "learning_rate": 0.001,
+        "lr_scheduler": "constant", "warmup_steps": 0, "weight_decay": 0.0,
+        "bf16": True, "fp16": False, "tf32": False,
+        "gradient_checkpointing": False, "attn_implementation": "sdpa",
+        "train_on_inputs": True, "logging_steps": 1, "save_steps": 1,
+        "save_total_limit": 3, "save_safetensors": True,
+        "seed": 17, "shuffle_merged_datasets": False,
+        "dataloader_num_workers": 0, "dataloader_pin_memory": False,
+        "report_to": "none", "use_wandb": False, "hub_model_id": None,
+    }
+    dump(root / "base-config.json", config)
+
+
+def compare_flash():
+    torch = gpu()
+    from flash_attn import flash_attn_func
+    import torch.nn.functional as functional
+
+    # Compare the extension itself, not PyTorch's possibly-fused SDPA dispatch.
+    q, k, v = [torch.randn(2, 32, 4, 32, device="cuda", dtype=torch.bfloat16,
+                           requires_grad=True) for _ in range(3)]
+    reference_inputs = [tensor.detach().float().requires_grad_() for tensor in (q, k, v)]
+    rq, rk, rv = [tensor.transpose(1, 2) for tensor in reference_inputs]
+    scores = (rq @ rk.transpose(-1, -2)) / math.sqrt(32)
+    mask = torch.ones(32, 32, device="cuda", dtype=torch.bool).triu(1)
+    expected = (functional.softmax(scores.masked_fill(mask, -float("inf")), dim=-1) @ rv).transpose(1, 2)
+    actual = flash_attn_func(q, k, v, dropout_p=0.0, causal=True)
+    upstream = torch.randn_like(actual)
+    expected.backward(upstream.float())
+    actual.backward(upstream)
+    torch.testing.assert_close(actual.float(), expected, rtol=0.025, atol=0.025)
+    for name, tested, reference in zip(("q", "k", "v"), (q, k, v), reference_inputs):
+        require(tested.grad is not None and torch.isfinite(tested.grad).all(), f"FlashAttention {name} gradient missing/nonfinite")
+        torch.testing.assert_close(tested.grad.float(), reference.grad, rtol=0.05, atol=0.04)
+    torch.cuda.synchronize()
+    return {"forward": "matches FP32 causal attention", "backward": "q/k/v gradients match FP32 reference", "dtype": "bfloat16"}
+
+
+def compare_liger(root):
+    torch = gpu()
+    from transformers import AutoModelForCausalLM
+    from axolotl.integrations.liger import LigerPlugin
+    from axolotl.utils.dict import DictDefault
+
+    def evaluate(model):
+        model.train()
+        ids = torch.arange(4, 36, device="cuda").unsqueeze(0)
+        # Liger CE reuses its logits buffer for gradients. Compare prediction
+        # logits separately, while still checking the fused training loss/gradients.
+        with torch.no_grad():
+            logits = model(input_ids=ids, use_cache=False).logits
+        result = model(input_ids=ids, labels=ids, use_cache=False)
+        require(torch.isfinite(result.loss), "Liger/reference loss is nonfinite")
+        result.loss.backward()
+        gradients = {name: parameter.grad.detach().clone() for name, parameter in model.named_parameters()
+                     if parameter.grad is not None}
+        return result.loss.detach(), logits, gradients
+
+    reference_model = AutoModelForCausalLM.from_pretrained(root / "base", local_files_only=True,
+                         dtype=torch.float32, attn_implementation="eager").cuda()
+    expected_loss, expected_logits, expected_gradients = evaluate(reference_model)
+    del reference_model
+    LigerPlugin().pre_model_load(DictDefault({"model_config_type": "llama",
+        "liger_rope": True, "liger_rms_norm": True, "liger_glu_activation": True,
+        "liger_cross_entropy": True, "liger_fused_linear_cross_entropy": False,
+        "liger_use_token_scaling": False, "torch_compile": False}))
+    model = AutoModelForCausalLM.from_pretrained(root / "base", local_files_only=True,
+                     dtype=torch.float32, attn_implementation="eager").cuda()
+    require(any("liger" in type(module).__module__ for module in model.modules()),
+            "Axolotl Liger plugin did not install Liger modules")
+    loss, logits, gradients = evaluate(model)
+    torch.testing.assert_close(loss, expected_loss, rtol=1e-3, atol=1e-4)
+    torch.testing.assert_close(logits, expected_logits, rtol=0.01, atol=2e-4)
+    require(gradients.keys() == expected_gradients.keys(), "Liger changed which parameters receive gradients")
+    for name, gradient in gradients.items():
+        torch.testing.assert_close(gradient, expected_gradients[name], rtol=0.02, atol=2e-4,
+                                   msg=lambda message: f"Liger gradient {name}: {message}")
+    torch.cuda.synchronize()
+    return {"loss": loss.item(), "parameters_compared": len(gradients),
+            "forward_backward": "Axolotl Liger plugin versus unpatched FP32 Llama"}
+
+
+def collective():
+    torch = gpu()
+    import datetime
+    import torch.distributed as dist
+    dist.init_process_group("nccl", timeout=datetime.timedelta(seconds=120))
+    try:
+        rank, world = dist.get_rank(), dist.get_world_size()
+        require(world >= 2, "collective acceptance needs at least two GPUs")
+        value = torch.tensor([rank + 1.0], device="cuda")
+        dist.all_reduce(value)
+        require(value.item() == world * (world + 1) / 2, "RCCL all-reduce produced incorrect rank sum")
+        gathered = [torch.zeros_like(value) for _ in range(world)]
+        dist.all_gather(gathered, torch.tensor([float(rank)], device="cuda"))
+        require([item.item() for item in gathered] == list(range(world)), "RCCL all-gather rank mismatch")
+        dist.barrier()
+        torch.cuda.synchronize()
+        return {"rank": rank, "world_size": world, "backend": dist.get_backend(), "all_reduce": value.item()}
+    finally:
+        dist.destroy_process_group()
+
+
+def training(root, name):
+    torch = gpu()
+    from axolotl.cli.config import load_cfg
+    from axolotl.common.datasets import load_datasets
+    from axolotl.train import train
+
+    cfg = load_cfg(str(root / f"{name}.json"))
+    dataset = load_datasets(cfg=cfg)
+    model, _, trainer = train(cfg=cfg, dataset_meta=dataset)
+    require(trainer.state.global_step == int(cfg.max_steps), "Axolotl did not reach the requested optimizer step")
+    losses = [entry for entry in trainer.state.log_history if "loss" in entry]
+    require(losses and all(math.isfinite(entry["loss"]) and entry["loss"] > 0 for entry in losses),
+            "training did not produce finite positive logged losses")
+    norms = [entry["grad_norm"] for entry in losses if "grad_norm" in entry]
+    require(norms and all(math.isfinite(value) and value > 0 for value in norms),
+            "training gradients were missing, zero, or nonfinite")
+    if name == "resume":
+        require(any(entry.get("step") == 2 for entry in losses) and any(entry.get("step") == 3 for entry in losses),
+                "resumed trainer did not retain checkpoint history and perform step 3")
+    if name == "qlora":
+        import bitsandbytes as bnb
+        layers = [module for module in model.modules() if isinstance(module, bnb.nn.Linear4bit)]
+        require(layers, "QLoRA did not load any real bitsandbytes Linear4bit layers")
+        require(all(layer.weight.quant_state is not None and layer.weight.device.type == "cuda" for layer in layers),
+                "QLoRA layers lack GPU-resident quantization state")
+    if name == "fsdp2":
+        plugin = trainer.accelerator.state.fsdp_plugin
+        require(trainer.is_fsdp_enabled and plugin is not None and int(plugin.fsdp_version) == 2,
+                "requested FSDP2 run did not actually use FSDP2")
+        require(trainer.accelerator.num_processes >= 2, "FSDP2 ran without multiple processes")
+    if int(os.environ.get("RANK", "0")) == 0:
+        dump(root / f"{name}-training.json", {"global_step": trainer.state.global_step,
+             "losses": losses, "world_size": trainer.accelerator.num_processes})
+    return {"global_step": trainer.state.global_step, "final_loss": losses[-1]["loss"]}
+
+
+def check_weights(root, name):
+    import torch
+    from safetensors.torch import load_file
+    from transformers import AutoModelForCausalLM
+
+    output = root / ("lora" if name == "resume" else name)
+    if name in ("lora", "qlora", "resume"):
+        weights = load_file(str(output / "adapter_model.safetensors"))
+        require(weights and all(torch.isfinite(value).all() for value in weights.values()), "adapter weights missing/nonfinite")
+        updates = [value for key, value in weights.items() if "lora_B" in key]
+        require(updates and any(torch.count_nonzero(value) > 0 for value in updates), "LoRA B matrices remained zero; no learning occurred")
+        if name == "resume":
+            previous = load_file(str(output / "checkpoint-2" / "adapter_model.safetensors"))
+            require(any(not torch.equal(value, previous[key]) for key, value in weights.items()),
+                    "resumed adapter did not change after step 2")
+    else:
+        base = AutoModelForCausalLM.from_pretrained(root / "base", local_files_only=True, dtype=torch.float32)
+        trained = AutoModelForCausalLM.from_pretrained(output, local_files_only=True, dtype=torch.float32)
+        original = base.state_dict()
+        # Convert the base through the training dtype to exclude mere BF16 rounding.
+        require(any(not torch.equal(value, original[key].bfloat16().float())
+                    for key, value in trained.state_dict().items()), "full training changed no weights beyond dtype rounding")
+        require(all(torch.isfinite(value).all() for value in trained.parameters()), "full model has nonfinite weights")
+        ids = torch.arange(4, 20).unsqueeze(0)
+        with torch.no_grad():
+            result = trained(input_ids=ids, labels=ids)
+        require(torch.isfinite(result.loss), "reloaded full model loss is nonfinite")
+    return {"saved_weights": "finite and updated", "reload": "adapter safetensors" if name in ("lora", "qlora", "resume") else "Transformers full model"}
+
+
+def merge_check(root):
+    torch = gpu()
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM
+    from axolotl.cli.merge_lora import do_cli
+
+    config = json.loads((root / "lora.json").read_text())
+    config.update(lora_model_dir=str(root / "lora"), output_dir=str(root / "merge"),
+                  bf16=False, fp16=False, torch_dtype="float32")
+    dump(root / "merge.json", config)
+    do_cli(str(root / "merge.json"))
+    base = AutoModelForCausalLM.from_pretrained(root / "base", local_files_only=True,
+                                               dtype=torch.float32, attn_implementation="eager")
+    adapter = PeftModel.from_pretrained(base, root / "lora", local_files_only=True).cuda().eval()
+    merged = AutoModelForCausalLM.from_pretrained(root / "merge" / "merged", local_files_only=True,
+                          dtype=torch.float32, attn_implementation="eager").cuda().eval()
+    require(not isinstance(merged, PeftModel), "merged checkpoint still requires PEFT adapters")
+    ids = torch.arange(4, 28, device="cuda").unsqueeze(0)
+    with torch.no_grad():
+        expected = adapter(input_ids=ids).logits
+        actual = merged(input_ids=ids).logits
+        torch.testing.assert_close(actual, expected, rtol=0.015, atol=0.004)
+        generated = merged.generate(ids, max_new_tokens=4, do_sample=False, pad_token_id=0)
+    require(torch.isfinite(actual).all(), "merged model produced nonfinite logits")
+    require(generated.shape[1] > ids.shape[1], "merged model did not generate a token")
+    return {"merge": "Axolotl merge_lora", "reload": "standalone model", "logits": "match PEFT adapter", "generation": "greedy"}
+
+
+def worker(kind, root, detail):
+    root = Path(root)
+    if kind == "prepare":
+        prepare(root)
+        result = {"assets": "local deterministic random Llama and completion data"}
+    elif kind == "flash":
+        result = compare_flash()
+    elif kind == "liger":
+        result = compare_liger(root)
+    elif kind == "collective":
+        result = collective()
+    elif kind == "train":
+        result = training(root, detail)
+    elif kind == "weights":
+        result = check_weights(root, detail)
+    elif kind == "merge":
+        result = merge_check(root)
+    elif kind == "devices":
+        torch = gpu()
+        require(torch.cuda.device_count() >= int(detail), f"requested {detail} GPUs, found {torch.cuda.device_count()}")
+        result = {"hip": torch.version.hip, "torch": torch.__version__,
+                  "devices": [torch.cuda.get_device_name(index) for index in range(torch.cuda.device_count())]}
+    else:
+        raise ValueError(f"unknown internal worker: {kind}")
+    if int(os.environ.get("RANK", "0")) == 0:
+        dump(root / f"result-{kind}-{detail or 'single'}.json", result)
+    print(f"PASS {kind} {detail}: {json.dumps(result)}", flush=True)
+
+
+def child_environment(root):
+    environment = dict(os.environ)
+    # Only subprocesses receive these settings. Existing credentials/cache contents
+    # are neither read nor removed. All generated content stays under our directory.
+    for key in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "WANDB_API_KEY", "COMET_API_KEY",
+                "RANK", "LOCAL_RANK", "WORLD_SIZE", "LOCAL_WORLD_SIZE", "MASTER_ADDR", "MASTER_PORT"):
+        environment.pop(key, None)
+    for key in tuple(environment):
+        if key.startswith(("ACCELERATE_", "FSDP_", "PARALLELISM_CONFIG_")):
+            del environment[key]
+    environment.update({"HF_HOME": str(root / "cache/huggingface"),
+        "HOME": str(root / "home"), "XDG_CONFIG_HOME": str(root / "config"),
+        "HF_TOKEN_PATH": str(root / "home/hf-token"),
+        "HF_DATASETS_CACHE": str(root / "cache/datasets"), "HF_HUB_CACHE": str(root / "cache/hub"),
+        "XDG_CACHE_HOME": str(root / "cache"), "TRITON_CACHE_DIR": str(root / "cache/triton"),
+        "TORCH_HOME": str(root / "cache/torch"), "TORCH_EXTENSIONS_DIR": str(root / "cache/extensions"),
+        "TMPDIR": str(root / "tmp"), "HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1", "HF_HUB_DISABLE_IMPLICIT_TOKEN": "1",
+        "AXOLOTL_DO_NOT_TRACK": "1", "DO_NOT_TRACK": "1", "WANDB_MODE": "disabled",
+        "TOKENIZERS_PARALLELISM": "false", "OMP_NUM_THREADS": "2", "PYTHONUNBUFFERED": "1"})
+    return environment
+
+
+def run_stage(root, environment, timeout, kind, detail="", processes=1):
+    environment = environment.copy()
+    if processes == 1 and kind != "devices":
+        # HIP_VISIBLE_DEVICES and CUDA_VISIBLE_DEVICES are aliases in ROCm.
+        # Keep the first user-selected HIP device, inside any existing ROCR mask,
+        # and prevent Transformers from silently using DataParallel in single mode.
+        visible = environment.get("HIP_VISIBLE_DEVICES", environment.get("CUDA_VISIBLE_DEVICES", "0"))
+        environment["HIP_VISIBLE_DEVICES"] = visible.split(",")[0]
+        environment.pop("CUDA_VISIBLE_DEVICES", None)
+    command = [sys.executable]
+    if processes > 1:
+        command += ["-m", "torch.distributed.run", "--standalone", "--nnodes=1", f"--nproc-per-node={processes}"]
+    command += [str(Path(__file__).resolve()), "--_worker", kind, str(root), detail]
+    label = f"{kind}-{detail or 'single'}"
+    print(f"RUN {label} (deadline {timeout}s)", flush=True)
+    started = time.monotonic()
+    # Separate process groups permit bounded cleanup of torchrun and all ranks.
+    with (root / f"{label}.log").open("w", encoding="utf-8") as log:
+        process = subprocess.Popen(command, cwd=root, env=environment, stdout=log,
+                                   stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            code = process.wait(timeout=timeout)
+        except BaseException:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+            except ProcessLookupError:
+                pass
+            raise
+    if code != 0:
+        # Print a bounded failure excerpt before temporary artifacts are cleaned.
+        with (root / f"{label}.log").open(encoding="utf-8", errors="replace") as log:
+            from collections import deque
+            print("".join(deque(log, maxlen=100)), file=sys.stderr)
+        raise RuntimeError(f"{label} failed with exit {code}; log: {root / (label + '.log')}")
+    result = json.loads((root / f"result-{label}.json").read_text())
+    print(f"PASS {label} ({time.monotonic() - started:.1f}s): {json.dumps(result)}", flush=True)
+    return result
+
+
+def terminate(signum, _frame):
+    raise KeyboardInterrupt(f"received signal {signum}")
+
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--_worker":
+        worker(*sys.argv[2:])
+        return 0
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--mode", choices=("single", "multi", "all"), default="single",
+                        help="Default single. Multi runs collective and FSDP2 only; all runs both suites")
+    parser.add_argument("--gpus", type=int, default=2, help="Processes/devices for multi mode (2-8, default: 2)")
+    parser.add_argument("--checks", help="Comma-separated subset: " + ",".join(SINGLE_CHECKS + MULTI_CHECKS) + "; resume/merge automatically include LoRA")
+    location = parser.add_mutually_exclusive_group()
+    location.add_argument("--output", type=Path, help="Create this NEW directory and retain artifacts, including on failure; never overwrite")
+    location.add_argument("--keep", action="store_true", help="Retain the generated temporary directory, including on failure")
+    parser.add_argument("--timeout", type=int, default=900, help="Per-stage deadline in seconds (default: 900; includes initial kernel compilation)")
+    parser.add_argument("--metadata-only", action="store_true", help="Run axolotl-doctor metadata only; no training acceptance or GPU initialization")
+    args = parser.parse_args()
+    if args.metadata_only:
+        doctor = Path(__file__).resolve().with_name("axolotl-doctor")
+        return subprocess.run([sys.executable, str(doctor), "--metadata-only"], check=False).returncode
+    if not 2 <= args.gpus <= 8 or args.timeout < 1:
+        parser.error("--gpus must be 2-8 and --timeout must be positive")
+    allowed = set(SINGLE_CHECKS if args.mode == "single" else MULTI_CHECKS if args.mode == "multi" else SINGLE_CHECKS + MULTI_CHECKS)
+    checks = set(args.checks.split(",")) if args.checks else allowed.copy()
+    if not checks or checks - allowed:
+        parser.error(f"checks must be a nonempty subset of mode {args.mode}: {','.join(sorted(allowed))}")
+    if checks & {"resume", "merge"}:
+        checks.add("lora")
+    if args.output:
+        root = args.output.expanduser().absolute()
+        root.mkdir(parents=True, exist_ok=False)
+    else:
+        root = Path(tempfile.mkdtemp(prefix="verify-axolotl-"))
+    retain = args.keep or args.output is not None
+    print(f"Artifacts: {root} ({'retained' if retain else 'automatically removed on exit'})", flush=True)
+    results = {}
+    signal.signal(signal.SIGTERM, terminate)
+    try:
+        (root / "tmp").mkdir()
+        (root / "home").mkdir()
+        environment = child_environment(root)
+        run = lambda kind, detail="", processes=1: run_stage(root, environment, args.timeout, kind, detail, processes)
+        results["devices"] = run("devices", str(args.gpus if checks & set(MULTI_CHECKS) else 1))
+        run("prepare")
+        config = json.loads((root / "base-config.json").read_text())
+        for name in ("flash", "liger", "collective"):
+            if name in checks:
+                results[name] = run(name, processes=args.gpus if name == "collective" else 1)
+        for name in ("lora", "qlora", "full", "fsdp2"):
+            if name not in checks:
+                continue
+            training_config = dict(config, output_dir=str(root / name))
+            if name in ("lora", "qlora"):
+                training_config.update(adapter=name, lora_r=8, lora_alpha=16,
+                    lora_dropout=0.0, lora_target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+                    load_in_4bit=name == "qlora", load_in_8bit=False)
+            if name == "qlora":
+                training_config["bnb_config_kwargs"] = {"bnb_4bit_quant_type": "nf4", "bnb_4bit_use_double_quant": True,
+                                                        "bnb_4bit_compute_dtype": "bfloat16"}
+            if name == "full":
+                training_config.update(attn_implementation="flash_attention_2",
+                    plugins=["axolotl.integrations.liger.LigerPlugin"], liger_rope=True,
+                    liger_rms_norm=True, liger_glu_activation=True, liger_cross_entropy=False,
+                    liger_fused_linear_cross_entropy=True)
+            if name == "fsdp2":
+                training_config["fsdp_version"] = 2
+                training_config["fsdp_config"] = {"version": 2,
+                    "offload_params": False, "state_dict_type": "FULL_STATE_DICT",
+                    "transformer_layer_cls_to_wrap": "LlamaDecoderLayer",
+                    "auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
+                    "cpu_ram_efficient_loading": False, "reshard_after_forward": True}
+            dump(root / f"{name}.json", training_config)
+            results[name] = run("train", name, args.gpus if name == "fsdp2" else 1)
+            results[f"{name}-weights"] = run("weights", name)
+        if "resume" in checks:
+            config = json.loads((root / "lora.json").read_text())
+            checkpoint = root / "lora/checkpoint-2"
+            require((checkpoint / "optimizer.pt").is_file() and (checkpoint / "scheduler.pt").is_file(),
+                    "LoRA checkpoint lacks optimizer/scheduler state required for real resume")
+            config.update(max_steps=3, resume_from_checkpoint=str(checkpoint))
+            dump(root / "resume.json", config)
+            results["resume"] = run("train", "resume")
+            results["resume-weights"] = run("weights", "resume")
+        if "merge" in checks:
+            results["merge"] = run("merge")
+        dump(root / "summary.json", {"status": "PASS", "checks": sorted(checks), "results": results})
+        print(f"PASS: {', '.join(sorted(checks))}. Only the selected workloads and visible hardware were verified.", flush=True)
+        return 0
+    except (Exception, KeyboardInterrupt) as exc:
+        dump(root / "summary.json", {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}", "results": results})
+        print(f"FAIL: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if retain:
+            print(f"Retained artifacts: {root}", flush=True)
+        else:
+            shutil.rmtree(root)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

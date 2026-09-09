@@ -1,0 +1,94 @@
+#!/opt/venv/bin/python
+"""Copy bundled Axolotl recipes on explicit request, never over user files."""
+
+import argparse
+import os
+from pathlib import Path
+import shlex
+import shutil
+import sys
+
+
+SOURCE = Path("/opt/axolotl-recipes")
+
+
+def copy_missing(source, destination):
+    copied = 0
+    skipped = 0
+    for entry in sorted(source.iterdir()):
+        target = destination / entry.name
+        if entry.is_symlink():
+            raise OSError(f"Bundled recipe must not be a symlink: {entry}")
+        if entry.is_dir():
+            try:
+                target.mkdir()
+            except FileExistsError:
+                if target.is_symlink() or not target.is_dir():
+                    print(f"Keeping existing path (skipping subtree): {target}")
+                    skipped += 1
+                    continue
+            child_copied, child_skipped = copy_missing(entry, target)
+            copied += child_copied
+            skipped += child_skipped
+        else:
+            # Exclusive creation also preserves dangling symlinks and prevents
+            # a repeated/concurrent initializer from truncating a user's file.
+            try:
+                output = target.open("xb")
+            except FileExistsError:
+                print(f"Keeping existing path: {target}")
+                skipped += 1
+                continue
+            try:
+                with output, entry.open("rb") as original:
+                    shutil.copyfileobj(original, output)
+            except BaseException:
+                target.unlink()
+                raise
+            copied += 1
+    return copied, skipped
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Copy immutable /opt/axolotl-recipes into a writable workspace. "
+            "Existing files, directories in place of files, and symlinks are "
+            "never overwritten. No models or datasets are downloaded."
+        ),
+        epilog=(
+            "The destination may be an existing bind mount or named volume. "
+            "It must be writable by your current UID; this command does not "
+            "chown or chmod user data. Run training from the destination "
+            "directory so ./prepared, ./outputs and DeepSpeed paths resolve. "
+            "Training/preprocessing (not initialization) downloads the pinned "
+            "public model and dataset assets."
+        ),
+    )
+    parser.add_argument(
+        "destination", nargs="?", default="/workspace/axolotl",
+        help="workspace directory (default: /workspace/axolotl)",
+    )
+    args = parser.parse_args()
+    try:
+        if not SOURCE.is_dir():
+            raise OSError(f"Bundled recipes not found: {SOURCE}")
+        destination = Path(args.destination).expanduser().resolve()
+        if destination == SOURCE or SOURCE in destination.parents:
+            raise OSError("Choose a destination outside the immutable recipe directory")
+        destination.mkdir(parents=True, exist_ok=True)
+        copied, skipped = copy_missing(SOURCE, destination)
+    except OSError as error:
+        print(f"axolotl-workspace: {error}", file=sys.stderr)
+        return 1
+    print(f"Copied {copied} files; kept {skipped} existing paths in {destination}")
+    print("Next steps (explicitly downloads model/data when not already cached):")
+    print(f"  cd {shlex.quote(os.fspath(destination))}")
+    print("  axolotl preprocess lora-bf16.yaml")
+    print("  axolotl train lora-bf16.yaml --launcher python")
+    print("Read each YAML's comments before launching; GPU features require verification.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
