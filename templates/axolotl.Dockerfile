@@ -1,6 +1,7 @@
 
 # Axolotl-specific extension appended to the shared ROCm template by the renderer.
 ARG AXOLOTL_COMMIT=@@AXOLOTL_COMMIT@@
+# FlashAttention is a pinned wheel; only the smaller DeepSpeed build uses MAX_JOBS.
 ARG MAX_JOBS=8
 LABEL org.opencontainers.image.source="https://github.com/featherless-ai-integrations/featherless-cloud-docker-hub" \
       com.featherless.axolotl.version="@@AXOLOTL_VERSION@@" \

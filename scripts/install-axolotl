@@ -19,7 +19,7 @@ readonly expected_commit=2f5cb9da62a0fe763a1ddeb7798fc9acb2f4a417
 export PATH="/opt/venv/bin:${PATH}"
 export PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_INPUT=1 PIP_NO_CACHE_DIR=1
 export MAX_JOBS="${MAX_JOBS:-8}"
-export PYTORCH_ROCM_ARCH=gfx942 GPU_ARCHS=gfx942
+export PYTORCH_ROCM_ARCH=gfx942
 export FLASH_ATTENTION_TRITON_AMD_ENABLE=FALSE
 
 build_dir="$(mktemp -d /tmp/axolotl-build.XXXXXXXX)"
@@ -41,8 +41,8 @@ from packaging.version import Version
 
 if sys.version_info[:2] != (3, 12) or not torch.version.hip:
     raise SystemExit('Expected Python 3.12 and the ROCm PyTorch base')
-if not Version('2.11.0') <= Version(torch.__version__.split('+')[0]) <= Version('2.12.1'):
-    raise SystemExit(f'Axolotl 0.18.0 does not support base Torch {torch.__version__}')
+if torch.__version__ != '2.12.0+rocm7.14.0' or not torch.version.hip.startswith('7.14.'):
+    raise SystemExit('The pinned FlashAttention wheel requires Torch 2.12.0+rocm7.14.0; publish a matching wheel before changing the base')
 protected = {}
 for name in ('torch', 'torchvision', 'torchaudio', 'triton', 'pytorch-triton-rocm'):
     try:
@@ -96,32 +96,12 @@ git -C "$source" checkout --detach FETCH_HEAD
 git -C "$source" apply "$assets/axolotl-rocm.patch"
 "$python" -m pip install --no-deps --no-build-isolation "$source"
 
-# Keep the image vendor's ABI-matched CK build when present. A broken or old
-# installed build is an error, not a silent fallback. Only absence triggers a
-# source build pinned together with its gitlink-pinned CK/CUTLASS submodules.
-if "$python" - <<'PY'
-import importlib.metadata as md
-import sys
-try:
-    md.version('flash-attn')
-except md.PackageNotFoundError:
-    sys.exit(1)
-PY
-then
-    echo 'Preserving FlashAttention from the digest-pinned ROCm base.'
-    flash_source=base
-else
-    echo "Building FlashAttention 2.8.3 CK at $flash_commit for gfx942."
-    flash_source=source
-    git init "$build_dir/flash-attention"
-    git -C "$build_dir/flash-attention" remote add origin https://github.com/Dao-AILab/flash-attention.git
-    git -C "$build_dir/flash-attention" fetch --depth 1 origin "$flash_commit"
-    git -C "$build_dir/flash-attention" checkout --detach FETCH_HEAD
-    git -C "$build_dir/flash-attention" submodule update --init --depth 1 csrc/composable_kernel csrc/cutlass
-    BUILD_TARGET=rocm FLASH_ATTENTION_FORCE_BUILD=TRUE \
-        "$python" -m pip install --no-deps --no-build-isolation "$build_dir/flash-attention"
-fi
-export AXOLOTL_FLASH_SOURCE="$flash_source" AXOLOTL_FLASH_COMMIT="$flash_commit"
+# Install the reviewed CK binary, never PyPI's source distribution or a CUDA wheel.
+# Force replacement even if an overridden base contains a same-version build.
+# Missing assets or hash mismatches fail; there is no expensive source fallback.
+"$python" -m pip install --no-deps --only-binary=:all: --require-hashes \
+    --force-reinstall -r "$assets/flash-attn.lock"
+export AXOLOTL_FLASH_COMMIT="$flash_commit"
 
 # Build only the ROCm-supported training optimizers, rather than DS_BUILD_OPS=1
 # or the CUDA-only deepspeed-kernels extra. Other DS ops remain upstream JIT.
@@ -156,8 +136,8 @@ for name, original in protected.items():
     }
     if current != original:
         raise SystemExit(f'Protected base package changed: {name}')
-if Version(md.version('flash-attn')) < Version('2.8.3'):
-    raise SystemExit('FlashAttention >=2.8.3 is required')
+if Version(md.version('flash-attn')) != Version('2.8.3'):
+    raise SystemExit('The reviewed FlashAttention 2.8.3 wheel is required')
 # No GPU is required while building. bitsandbytes intentionally loads its CPU
 # library without a visible device, so load the exact HIP artifact directly.
 # ctypes symbol lookup cannot be satisfied by bnb's deferred-error wrapper.
@@ -170,9 +150,10 @@ if not all(installed_ops.get(name) for name in ('cpu_adam', 'fused_adam')):
 info = {
     'axolotl_commit': os.environ['AXOLOTL_COMMIT'],
     'flash_attention': {
-        'source': os.environ['AXOLOTL_FLASH_SOURCE'],
+        'source': 'prebuilt-wheel',
         'version': md.version('flash-attn'),
-        'commit': os.environ['AXOLOTL_FLASH_COMMIT'] if os.environ['AXOLOTL_FLASH_SOURCE'] == 'source' else None,
+        'commit': os.environ['AXOLOTL_FLASH_COMMIT'],
+        'wheel_requirement': Path('/opt/featherless/axolotl/flash-attn.lock').read_text().strip(),
         'backend': 'ck',
     },
     'protected_packages': protected,

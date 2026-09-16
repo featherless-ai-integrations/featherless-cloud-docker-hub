@@ -1,0 +1,4 @@
+# CK/gfx942 binary from the MI325X-validated image; Python 3.12, Torch 2.12.0+rocm7.14.0.
+# Publish this immutable release asset before building; no source fallback is permitted.
+flash-attn @ https://github.com/featherless-ai-integrations/featherless-cloud-docker-hub/releases/download/axolotl-native-rocm7.14-torch2.12.0-py3.12-gfx942-v1/flash_attn-2.8.3-1rocm714torch212gfx942-cp312-cp312-linux_x86_64.whl \
+    --hash=sha256:d4867d728796ec9dd81f9b47587275f789dc9b9c8fc2dc3e4dc00c419cd499b8
