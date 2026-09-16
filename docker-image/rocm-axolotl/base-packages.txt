@@ -4,6 +4,7 @@ torchvision
 torchaudio
 triton
 pytorch-triton-rocm
+# Installed separately from the reviewed native wheel lock.
 flash-attn
-# Built separately against that exact base by install-axolotl.
+# Built separately from the optimizer source lock against that exact base.
 deepspeed

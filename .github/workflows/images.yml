@@ -41,6 +41,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify published Axolotl native wheel before pulling the large base
+        if: matrix.target == 'axolotl'
+        run: |
+          python3 -m pip download --no-deps --only-binary=:all: --require-hashes \
+            --platform linux_x86_64 --python-version 3.12 --implementation cp --abi cp312 \
+            --dest "$RUNNER_TEMP/axolotl-native-wheel-check" \
+            -r docker-image/rocm-axolotl/flash-attn.lock
+          rm -rf "$RUNNER_TEMP/axolotl-native-wheel-check"
+
       - name: Reclaim Axolotl build space on disposable hosted runner
         if: matrix.target == 'axolotl'
         run: |

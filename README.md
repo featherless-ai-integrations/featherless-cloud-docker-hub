@@ -102,12 +102,14 @@ complete-version Featherless image when available. The latter is passed to
 built image rather than a separate cache artifact or floating `buildcache` tag.
 Unchanged package-installation layers can then be reused.
 
-The Axolotl job uses a standard hosted runner, removes unused Android/.NET/Haskell
-and cached hosted toolchains before pulling, skips the second image pull, and
-imports inline cache metadata directly from the published image through
-BuildKit's registry cache importer. Native extensions compile with `MAX_JOBS=2`
-to conserve RAM. This makes cold builds slower while still reusing unchanged
-published layers. The AMD base alone occupies about 28 GB unpacked; runner
+The Axolotl job uses a standard hosted runner. Before pulling the large base, it
+downloads and hash-checks the pinned FlashAttention GitHub Release wheel. The
+image installs that binary with no source-build fallback. The job removes unused
+Android/.NET/Haskell and cached hosted toolchains, skips the second image pull,
+and imports inline cache metadata from the published image through BuildKit.
+Only DeepSpeed's CPUAdam/FusedAdam extensions still compile, with `MAX_JOBS=2`
+to conserve RAM. CPUAdam uses `-march=native`, so its wheel is not reused across
+different builders. The AMD base alone occupies about 28 GB unpacked; runner
 image changes and dependency growth can still require a larger runner. The job
 checks the real entrypoint and Axolotl metadata before publishing
 `featherlesscloud/rocm-axolotl:<complete-stack-version>` and
@@ -118,16 +120,59 @@ checks the real entrypoint and Axolotl metadata before publishing
 The Axolotl image preserves the shared MI325X guard, SSH/Jupyter lifecycle, and
 `featherless-init` entrypoint. Boot does not download models, start training, or
 compile extensions. Its independent base digest and Axolotl release commit are
-pinned in `versions.env`; Python dependencies and native source artifacts are
-hash-locked under `docker-image/rocm-axolotl/`.
+pinned in `versions.env`; Python dependencies, the native FlashAttention wheel,
+and DeepSpeed source artifact are hash-locked under `docker-image/rocm-axolotl/`.
 
 The stack includes ROCm PyTorch 2.12, Axolotl 0.18.0, Transformers/PEFT/TRL,
-Liger's Triton kernels, CK FlashAttention 2.8.3 compiled for `gfx942`,
+Liger's Triton kernels, a prebuilt CK FlashAttention 2.8.3 wheel for `gfx942`,
 bitsandbytes 0.50.2 with its ROCm 7.14 native library, and DeepSpeed 0.18.6 with
 prebuilt CPUAdam/FusedAdam. The ROCm development SDK is initialized at `/opt/rocm`
 for custom HIP extensions. Build-time checks reject replacement of inherited
 Torch/vision/audio/Triton binaries and NVIDIA runtime dependencies.
 `/opt/axolotl-build-info.json` records the installed versions and build choices.
+
+### FlashAttention release artifact
+
+`flash-attn.lock` pins an exact wheel URL and SHA-256. It targets the pinned
+Ubuntu 24.04 x86-64 base, Python 3.12 and `torch==2.12.0+rocm7.14.0`; a base-stack
+change requires a new compatible, GPU-validated wheel and lock. Missing release
+assets or a hash mismatch fail the build rather than starting a multi-hour compilation.
+
+The initial wheel is repacked from the already-validated exported image. All 86
+package/native files were checked against the installed wheel's original
+`RECORD`; no Python code or compiled binary was changed. Its build tag identifies
+the ROCm/Torch/GPU stack. The release also carries `flash-attn-provenance.json`
+(source/base commits and per-file hashes) and `SHA256SUMS`. These binaries are
+release assets, not Git blobs.
+The wheel retains FlashAttention's BSD-3-Clause notices and includes CK's MIT license.
+
+Publish the prepared assets **before** enabling the updated image build. From
+the directory containing the wheel, provenance JSON and checksum file, using an
+account with repository release-write access:
+
+```bash
+sha256sum -c SHA256SUMS
+gh release create axolotl-native-rocm7.14-torch2.12.0-py3.12-gfx942-v1 \
+  --repo featherless-ai-integrations/featherless-cloud-docker-hub \
+  --target 2a8ef585ab37ad32f7af65c243ac318744d0d019 \
+  --title 'FlashAttention 2.8.3 CK: ROCm 7.14 / Torch 2.12 / gfx942' \
+  --notes 'Exact-stack native wheel; see flash-attn-provenance.json and SHA256SUMS.' \
+  flash_attn-2.8.3-1rocm714torch212gfx942-cp312-cp312-linux_x86_64.whl \
+  flash-attn-provenance.json SHA256SUMS
+```
+
+For a future stack update, build FlashAttention **once on a suitable builder**,
+not in the routine image CI: use the intended digest-pinned ROCm image with its
+development SDK initialized, check out the reviewed FlashAttention and CK
+commits, and run `python -m pip wheel --no-deps --no-build-isolation .` with
+`BUILD_TARGET=rocm`, `FLASH_ATTENTION_FORCE_BUILD=TRUE`,
+`FLASH_ATTENTION_TRITON_AMD_ENABLE=FALSE`, `GPU_ARCHS=gfx942` and
+`PYTORCH_ROCM_ARCH=gfx942`. Install that wheel in the intended image and run the
+MI325X acceptance suite below before publishing it under a new release tag.
+Update `flash-attn.lock` and the installer's exact Torch/FlashAttention checks
+together; never replace bytes behind an existing pinned asset.
+
+### Dependency updates and workspace
 
 To resolve an intentional dependency update (using uv 0.9.30):
 
@@ -148,7 +193,7 @@ docker build --file docker-image/rocm-axolotl/Dockerfile \
   --build-arg MAX_JOBS=8 --tag featherlesscloud/rocm-axolotl:local .
 ```
 
-Choose compiler parallelism for the builder's RAM; this does not limit training.
+Choose DeepSpeed compiler parallelism for the builder's RAM; it does not limit training.
 Run the image through the same Compose configuration below, changing `IMAGE` to
 the complete `rocm-axolotl` tag. Inside the container:
 
@@ -204,6 +249,17 @@ CPU video decoding, workspace preservation, and the real tini/Featherless
 entrypoint. Local validation used PRoot over the unpacked image, not a Docker
 daemon or a live GitHub Actions publication. DPO/GRPO/VLM recipes, eight-way
 distributed training, and multi-node execution were not exercised by that run.
+
+The prebuilt-wheel cutover was checked by restoring that image, uninstalling
+FlashAttention, then installing the final local release wheel with binary-only
+and SHA-256 enforcement. Installation took 0.88 seconds excluding download;
+an incorrect hash was rejected and protected vendor packages were unchanged.
+All nine acceptance workloads passed again, including FlashAttention BF16
+forward/backward, LoRA/NF4 QLoRA, fused full training, resume/merge, and two-GPU
+RCCL/FSDP2. All eight GPUs passed the doctor's numerical check. The actual
+installer pre/post checks also passed without GPU exposure. This exercised the
+prepared wheel under PRoot, not the unpublished GitHub asset URL or a new
+GitHub Actions image build; the other native packages were not rebuilt in this run.
 
 ## LXCFS node-service image
 
