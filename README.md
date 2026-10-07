@@ -13,7 +13,6 @@ ROCm-native telemetry.
 | `sgl-dev` | `rocm/sgl-dev` | `rocm-sgl` |
 | `vllm` | `rocm/vllm` | `rocm-vllm` |
 | `axolotl` | `rocm/pytorch` + pinned Axolotl | `rocm-axolotl` |
-| `core-lxcfs` | Ubuntu 24.04 | `core-lxcfs` |
 
 Each output has a dedicated Docker Hub Autobuild Dockerfile:
 
@@ -22,18 +21,15 @@ docker-image/rocm-pytorch/Dockerfile
 docker-image/rocm-sgl/Dockerfile
 docker-image/rocm-vllm/Dockerfile
 docker-image/rocm-axolotl/Dockerfile
-docker-image/core-lxcfs/Dockerfile
 ```
 
 Configure each Docker Hub build rule with **Build context `/`** and its matching
 **Dockerfile location** above. The root context is required because the ROCm images
 copy the shared `scripts/featherless-init` lifecycle script. Suggested Docker
-Hub repositories are `rocm-pytorch`, `rocm-sgl`, `rocm-vllm`, `rocm-axolotl`,
-and `core-lxcfs`.
+Hub repositories are `rocm-pytorch`, `rocm-sgl`, `rocm-vllm` and `rocm-axolotl`.
 
 ROCm Dockerfiles are generated from `templates/rocm.Dockerfile`; Axolotl also
-appends `templates/axolotl.Dockerfile`. `core-lxcfs` uses
-`templates/core-lxcfs.Dockerfile`. The root Dockerfile remains
+appends `templates/axolotl.Dockerfile`. The root Dockerfile remains
 a compatibility entrypoint for the PyTorch image. After changing the common image
 layer or an upstream default, regenerate and verify them with:
 
@@ -89,10 +85,8 @@ The current pinned version tags are derived from `versions.env`:
 | `rocm-sgl` | `sglang0.5.17-rocm7.2.0-mi30x-20260819` |
 | `rocm-vllm` | `rocm7.14.0-ubuntu24.04-py3.14-pytorch2.11.0-vllm0.23.0` |
 | `rocm-axolotl` | `axolotl0.18.0-rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0` |
-| `core-lxcfs` | `5.0.4-ubuntu24.04` |
 
-ROCm bases come from AMD's `rocm/*` Docker Hub namespace; `core-lxcfs` uses
-a digest-pinned official Ubuntu base. The
+ROCm bases come from AMD's `rocm/*` Docker Hub namespace. The
 resulting Featherless images are published to the separate `featherlesscloud/*`
 namespace.
 
@@ -260,28 +254,6 @@ RCCL/FSDP2. All eight GPUs passed the doctor's numerical check. The actual
 installer pre/post checks also passed without GPU exposure. This exercised the
 prepared wheel under PRoot, not the unpublished GitHub asset URL or a new
 GitHub Actions image build; the other native packages were not rebuilt in this run.
-
-## LXCFS node-service image
-
-`core-lxcfs` is a platform infrastructure image, not a customer GPU template.
-It contains LXCFS, FUSE tools, `nsenter`, `mountpoint`, and `timeout`; it has no
-ROCm, SSH, or Jupyter dependency. The Ubuntu base digest and LXCFS package version
-are pinned in `versions.env`. Other apt dependencies are resolved during build;
-deploy the resulting image by digest.
-
-```bash
-VERSION=5.0.4-ubuntu24.04 REGISTRY=featherlesscloud \
-  docker buildx bake core-lxcfs --load
-docker run --rm featherlesscloud/core-lxcfs:5.0.4-ubuntu24.04 --version
-```
-
-The release workflow includes this image and checks its executable dependencies.
-Publishing still requires a main-branch push, release tag, or manual workflow.
-Building this image does not deploy LXCFS. The GPU Cloud repository owns the
-DaemonSet at `deploy/lxcfs/daemonset.yaml`; supply its `LXCFS_IMAGE` using the
-published digest. Privileges and host mounts belong in that platform manifest.
-Do not run a second daemon over an existing LXCFS mount. Validate daemon lifecycle
-and CPU/memory views on a disposable worker before attaching customer Pods.
 
 ## Run on an MI325X host
 
