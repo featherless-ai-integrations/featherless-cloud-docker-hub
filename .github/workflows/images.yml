@@ -123,19 +123,18 @@ jobs:
             --tag "$SHA_IMAGE" \
             .
 
-      - name: Check LXCFS image tools
-        if: matrix.target == 'core-lxcfs'
+      - name: Check featherless-init image contents
+        if: matrix.target == 'featherless-init'
         env:
           BUILT_IMAGE: ${{ env.OUTPUT_NAMESPACE }}/${{ matrix.repository }}:${{ matrix.version }}
         run: |
-          docker run --rm "$BUILT_IMAGE" --version
-          docker run --rm --entrypoint /bin/sh "$BUILT_IMAGE" -ec '
-            command -v nsenter
-            command -v mountpoint
-            command -v timeout
-            command -v fusermount3
-            lxcfs --help 2>&1 | grep -q -- --enable-cfs
-          '
+          docker run --rm --entrypoint /tini "$BUILT_IMAGE" --version
+          docker create --name featherless-init-contents "$BUILT_IMAGE" /tini >/dev/null
+          contents=$(docker export featherless-init-contents | tar -t | sort | tee /dev/stderr)
+          grep -qx 'profile.d/featherless.sh' <<<"$contents"
+          grep -qx 'banner' <<<"$contents"
+          grep -qx 'sh' <<<"$contents"
+          docker rm featherless-init-contents >/dev/null
 
       - name: Check Axolotl lifecycle and environment without a GPU
         if: matrix.target == 'axolotl'

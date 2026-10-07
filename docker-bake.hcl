@@ -1,7 +1,7 @@
 variable "REGISTRY" { default = "localhost/featherless-ai" }
 variable "VERSION" { default = "local" }
 
-group "default" { targets = ["pytorch", "sgl-dev", "vllm", "axolotl", "core-lxcfs"] }
+group "default" { targets = ["pytorch", "sgl-dev", "vllm", "axolotl", "featherless-init"] }
 
 target "common" {
   context = "."
@@ -34,10 +34,10 @@ target "axolotl" {
   tags = ["${REGISTRY}/rocm-axolotl:${VERSION}"]
 }
 
-# Infrastructure image deliberately does not inherit GPU labels.
-target "core-lxcfs" {
+# Mounted into instance containers; built FROM scratch around static tini.
+target "featherless-init" {
   context = "."
-  dockerfile = "docker-image/core-lxcfs/Dockerfile"
+  dockerfile = "docker-image/featherless-init/Dockerfile"
   platforms = ["linux/amd64"]
-  tags = ["${REGISTRY}/core-lxcfs:${VERSION}"]
+  tags = ["${REGISTRY}/featherless-init:${VERSION}"]
 }
