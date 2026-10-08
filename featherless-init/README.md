@@ -53,7 +53,8 @@ sshd runs on port 22 with its own configuration:
 restores the container's `PATH` (`/etc/profile` resets it on most distributions) and attaches the
 login to the tmux session `default`, creating it if needed. It runs before the image's other profile
 scripts, so what they print, such as the template images' banner, appears inside the session; the
-banner shows once per session, in the window that created it. `touch ~/.no_auto_tmux` opts out;
+banner shows once per session, in the window that created it. A terminal the image has no terminfo
+entry for, such as Ghostty's `xterm-ghostty`, attaches as `xterm-256color`. `touch ~/.no_auto_tmux` opts out;
 without tmux, or if tmux cannot start, the login stays a plain shell.
 
 ## Build and release
