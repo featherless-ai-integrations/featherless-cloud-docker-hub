@@ -8,15 +8,7 @@ if [ -n "${FEATHERLESS_CONTAINER_PATH:-}" ]; then
   export PATH
 fi
 
-if [ -n "${TMUX:-}" ]; then
-  # The banner shows once per tmux session, in the window that created it.
-  if tmux show-environment FEATHERLESS_BANNER_SHOWN >/dev/null 2>&1; then
-    FEATHERLESS_BANNER_SHOWN=1
-    export FEATHERLESS_BANNER_SHOWN
-  else
-    tmux set-environment FEATHERLESS_BANNER_SHOWN 1
-  fi
-elif [ -n "${SSH_TTY:-}" ] && [ ! -e "$HOME/.no_auto_tmux" ] && command -v tmux >/dev/null 2>&1; then
+if [ -z "${TMUX:-}" ] && [ -n "${SSH_TTY:-}" ] && [ ! -e "$HOME/.no_auto_tmux" ] && command -v tmux >/dev/null 2>&1; then
   # Every SSH login lands in the shared session "default". Opt out with: touch ~/.no_auto_tmux
   # tmux refuses a terminal the image has no terminfo entry for (xterm-ghostty, xterm-kitty).
   featherless_term=xterm-256color

@@ -53,9 +53,8 @@ sshd runs on port 22 with its own configuration:
 `profile.d/featherless.sh` runs in login shells, which sshd starts only for interactive logins. It
 restores the container's `PATH` (`/etc/profile` resets it on most distributions) and attaches the
 login to the tmux session `default`, creating it if needed. It runs before the image's other profile
-scripts, so what they print appears inside the session. It then shows the banner once per session, in
-the window that created it, or on every login that stays a plain shell; template images skip their
-own copy. A terminal the image has no terminfo entry for, such as Ghostty's `xterm-ghostty`,
+scripts, so what they print appears inside the session. It then shows the banner in every new shell
+of the session, or on a login that stays a plain shell; template images skip their own copy. A terminal the image has no terminfo entry for, such as Ghostty's `xterm-ghostty`,
 attaches as `xterm-256color`. `touch ~/.no_auto_tmux` opts out; without tmux, or if tmux cannot
 start, the login stays a plain shell.
 
