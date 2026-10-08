@@ -137,6 +137,17 @@ jobs:
             lxcfs --help 2>&1 | grep -q -- --enable-cfs
           '
 
+      - name: Check featherless-init image contents
+        if: matrix.target == 'featherless-init'
+        env:
+          BUILT_IMAGE: ${{ env.OUTPUT_NAMESPACE }}/${{ matrix.repository }}:${{ matrix.version }}
+        run: |
+          docker run --rm --entrypoint /tini "$BUILT_IMAGE" --version
+          docker create --name featherless-init-contents "$BUILT_IMAGE" /tini >/dev/null
+          docker export featherless-init-contents | tar -t | sort | tee /dev/stderr \
+            | grep -qx 'profile.d/featherless.sh'
+          docker rm featherless-init-contents >/dev/null
+
       - name: Check Axolotl lifecycle and environment without a GPU
         if: matrix.target == 'axolotl'
         env:

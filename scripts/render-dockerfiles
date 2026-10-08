@@ -56,3 +56,8 @@ render docker-image/core-lxcfs/Dockerfile \
   "$LXCFS_BASE" \
   "Featherless Cloud LXCFS node service" \
   "$repo_root/templates/core-lxcfs.Dockerfile"
+
+render docker-image/featherless-init/Dockerfile \
+  "$FEATHERLESS_INIT_BASE" \
+  "Featherless Cloud instance init, mounted into instance containers" \
+  "$repo_root/templates/featherless-init.Dockerfile"
