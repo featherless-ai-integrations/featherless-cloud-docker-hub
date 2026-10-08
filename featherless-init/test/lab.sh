@@ -76,8 +76,8 @@ for image in "${images[@]}"; do
   banner=$(on "$host" 'pane=$(tmux capture-pane -p -t default -S -100); echo "$(echo "$pane" | grep -c "GPU CLOUD") $(echo "$pane" | grep -c LAB-BANNER)"')
   [ "$banner" = "1 0" ] && check "the Featherless banner shows inside the new session, the image's own banner does not repeat it" ok \
     || check "banner in session" "GPU CLOUD and LAB-BANNER counts: ${banner:-none}"
-  second=$(on "$host" 'tmux new-window -t default; sleep 1; tmux capture-pane -p -t default -S -100 | grep -c -e "GPU CLOUD" -e LAB-BANNER; tmux kill-window -t default')
-  [ "$second" = 0 ] && check "a new window in the session skips the banner" ok || check "banner in new window" "$second"
+  second=$(on "$host" 'tmux new-window -t default; sleep 1; pane=$(tmux capture-pane -p -t default -S -100); echo "$(echo "$pane" | grep -c "GPU CLOUD") $(echo "$pane" | grep -c LAB-BANNER)"; tmux kill-window -t default')
+  [ "$second" = "1 0" ] && check "a new window shows the banner too" ok || check "banner in new window" "GPU CLOUD and LAB-BANNER counts: ${second:-none}"
 
   pane_path=$(on "$host" 'tmux send-keys -t default "echo \$PATH > /tmp/pane-path" Enter; sleep 1; cat /tmp/pane-path')
   case $pane_path in
