@@ -118,4 +118,18 @@ for image in "${images[@]}"; do
   docker rm -f "$host" >/dev/null
 done
 
+# An image without a package manager runs its command and gives up on SSH at once.
+echo "== busybox:1.37, no package manager"
+docker rm -f fl-init-busybox >/dev/null 2>&1
+docker run -d --quiet --name fl-init-busybox --platform "linux/$arch" \
+  --mount "type=image,source=$bundle,target=/run/featherless/init" \
+  --entrypoint /run/featherless/init/featherless-init busybox:1.37 -- sleep infinity >/dev/null
+sleep 5
+log=$(docker exec fl-init-busybox cat /run/featherless/state/init.log)
+case $log in
+  *"No sshd; SSH is unavailable"*) check "SSH is reported unavailable without retrying" ok ;;
+  *) check "no package manager" "$(echo "$log" | tail -2 | tr '\n' ' ')" ;;
+esac
+docker rm -f fl-init-busybox >/dev/null
+
 exit "$failed"
