@@ -14,7 +14,8 @@ This is not the template images' entrypoint (`scripts/featherless-init`); it wor
 |---|---|
 | `/run/featherless/init` | This image, mounted read-only |
 | `/run/featherless/init/featherless-init -- <command...>` | The container command: the instance's command, or the image's ENTRYPOINT and CMD |
-| `/run/featherless/state` | Written at runtime: `init.log`, the generated `sshd_config`, the host key, the sshd PID file |
+| `/run/featherless/init/banner` | The login banner, `scripts/featherless-login-banner`, the same one template images bake in |
+| `/run/featherless/state` | Written at runtime: `init.log`, the generated `sshd_config`, the host key, the sshd PID file, `started` (the banner's uptime in images without procps) |
 | `/etc/profile.d/00-featherless.sh` | Linked to `profile.d/featherless.sh` at start (image volumes mount only directories), named to run before the image's own profile scripts |
 | `FEATHERLESS_AUTHORIZED_KEYS_PATH` | The platform-managed keys file sshd reads on every login |
 
@@ -52,10 +53,11 @@ sshd runs on port 22 with its own configuration:
 `profile.d/featherless.sh` runs in login shells, which sshd starts only for interactive logins. It
 restores the container's `PATH` (`/etc/profile` resets it on most distributions) and attaches the
 login to the tmux session `default`, creating it if needed. It runs before the image's other profile
-scripts, so what they print, such as the template images' banner, appears inside the session; the
-banner shows once per session, in the window that created it. A terminal the image has no terminfo
-entry for, such as Ghostty's `xterm-ghostty`, attaches as `xterm-256color`. `touch ~/.no_auto_tmux` opts out;
-without tmux, or if tmux cannot start, the login stays a plain shell.
+scripts, so what they print appears inside the session. It then shows the banner once per session, in
+the window that created it, or on every login that stays a plain shell; template images skip their
+own copy. A terminal the image has no terminfo entry for, such as Ghostty's `xterm-ghostty`,
+attaches as `xterm-256color`. `touch ~/.no_auto_tmux` opts out; without tmux, or if tmux cannot
+start, the login stays a plain shell.
 
 ## Build and release
 

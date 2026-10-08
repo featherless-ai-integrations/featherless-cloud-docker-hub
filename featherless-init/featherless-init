@@ -7,6 +7,8 @@
 here=$(dirname "$0")
 state=/run/featherless/state
 mkdir -p "$state"
+# The login banner's uptime, for images without procps.
+{ date +%s >"$state/started"; } 2>/dev/null
 
 # Image volumes mount only directories, so the login hook is linked in, named
 # to run before the image's own profile scripts.

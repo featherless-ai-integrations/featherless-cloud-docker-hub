@@ -90,6 +90,16 @@ storage_usage() {
 
 uptime_seconds=$(ps -o etimes= -p 1 2>/dev/null | tr -d ' ')
 case "$uptime_seconds" in
+  ''|*[!0-9]*)
+    # Without procps, featherless-init's record of when the container started.
+    started=$(cat /run/featherless/state/started 2>/dev/null)
+    case "$started" in
+      ''|*[!0-9]*) ;;
+      *) uptime_seconds=$(($(date +%s) - started)) ;;
+    esac
+    ;;
+esac
+case "$uptime_seconds" in
   ''|*[!0-9]*) uptime_summary='Unavailable' ;;
   *) uptime_summary=$(format_uptime "$uptime_seconds") ;;
 esac

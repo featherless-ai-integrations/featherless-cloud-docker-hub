@@ -144,8 +144,9 @@ jobs:
         run: |
           docker run --rm --entrypoint /tini "$BUILT_IMAGE" --version
           docker create --name featherless-init-contents "$BUILT_IMAGE" /tini >/dev/null
-          docker export featherless-init-contents | tar -t | sort | tee /dev/stderr \
-            | grep -qx 'profile.d/featherless.sh'
+          contents=$(docker export featherless-init-contents | tar -t | sort | tee /dev/stderr)
+          grep -qx 'profile.d/featherless.sh' <<<"$contents"
+          grep -qx 'banner' <<<"$contents"
           docker rm featherless-init-contents >/dev/null
 
       - name: Check Axolotl lifecycle and environment without a GPU
