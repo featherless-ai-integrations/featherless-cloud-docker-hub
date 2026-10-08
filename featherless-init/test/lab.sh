@@ -145,4 +145,11 @@ got=$(docker run --rm --quiet --platform "linux/$arch" \
   -- python3 -c 'import os; print(os.getpid(), os.path.exists("/run/featherless/state"))' 2>&1)
 [ "$got" = "1 False" ] && check "the command runs as PID 1 and nothing else starts" ok || check "no shell" "$got"
 
+# The SSH side needs root; a non-root container's output stays its own.
+echo "== debian:trixie-slim as uid 1000"
+got=$(docker run --rm --quiet --platform "linux/$arch" --user 1000 \
+  --mount "type=image,source=$bundle,target=/run/featherless/init" \
+  --entrypoint /run/featherless/init/featherless-init debian:trixie-slim -- sh -c 'echo "$$"' 2>&1)
+[ "$got" = 1 ] && check "the command runs as PID 1 and the output is only its own" ok || check "non-root" "$(echo "$got" | tr '\n' ' ')"
+
 exit "$failed"

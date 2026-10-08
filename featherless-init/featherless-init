@@ -5,25 +5,25 @@
 # the instance's command, which keeps PID 1, its signals and its exit code.
 # Nothing it starts writes to the container's output.
 
-# An image without a shell has nothing to log in to: run only its command.
-if [ ! -x /bin/sh ]; then
-  [ "${1:-}" = "--" ] && shift
+if [ "${1:-}" = "--" ]; then
+  shift
+fi
+
+state=/run/featherless/state
+
+# Without a shell there is nothing for SSH to log in to, and without root the
+# SSH side cannot be set up: such an image runs only its command.
+if [ ! -x /bin/sh ] || ! mkdir -p "$state" 2>/dev/null; then
   [ $# -gt 0 ] || { echo "featherless-init: no command to run" >&2; exit 127; }
   exec "$@"
 fi
 
 here=$(dirname "$0")
-state=/run/featherless/state
-mkdir -p "$state"
 
 # Image volumes mount only directories, so the login hook is linked in, named
 # to run before the image's own profile scripts.
 if [ -d /etc/profile.d ]; then
-  ln -sf "$here/profile.d/featherless.sh" /etc/profile.d/00-featherless.sh
-fi
-
-if [ "${1:-}" = "--" ]; then
-  shift
+  ln -sf "$here/profile.d/featherless.sh" /etc/profile.d/00-featherless.sh 2>/dev/null
 fi
 
 if [ $# -eq 0 ]; then
