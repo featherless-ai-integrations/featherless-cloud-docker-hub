@@ -17,6 +17,13 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"; docker rm -f fl-init-client >/dev/null 2>&1' EXIT
 ssh-keygen -q -t ed25519 -N '' -C lab -f "$work/id_ed25519"
 mkdir "$work/keys" && cp "$work/id_ed25519.pub" "$work/keys/authorized_keys" && chmod 0755 "$work/keys" && chmod 0444 "$work/keys/authorized_keys"
+# A stand-in for the template images' login banner, with the same once-only guard.
+cat >"$work/banner.sh" <<'BANNER'
+[ "${FEATHERLESS_BANNER_SHOWN:-}" = 1 ] && return 0
+FEATHERLESS_BANNER_SHOWN=1
+export FEATHERLESS_BANNER_SHOWN
+echo LAB-BANNER
+BANNER
 
 docker network create fl-init-lab >/dev/null 2>&1
 docker rm -f fl-init-client >/dev/null 2>&1
@@ -34,7 +41,7 @@ for image in "${images[@]}"; do
   echo "== $image ($arch)"
   docker run -d --name "$host" --network fl-init-lab --platform "linux/$arch" \
     --mount "type=image,source=$bundle,target=/run/featherless/init" \
-    -v "$work/keys:/run/featherless/ssh:ro" \
+    -v "$work/keys:/run/featherless/ssh:ro" -v "$work/banner.sh:/etc/profile.d/10-lab-banner.sh:ro" \
     -e FEATHERLESS_AUTHORIZED_KEYS_PATH=/run/featherless/ssh/authorized_keys -e LAB_IMAGE_VAR=from-container \
     --entrypoint /run/featherless/init/featherless-init "$image" \
     -- sh -c 'trap "echo got-term; exit 7" TERM; echo "instance-command pid=$$"; while :; do sleep 1; done' >/dev/null
@@ -65,6 +72,11 @@ for image in "${images[@]}"; do
   tty_session "$host" $'\002d' >/dev/null
   sessions=$(on "$host" 'tmux ls -F "#{session_name}"' 2>&1)
   [ "$sessions" = default ] && check "interactive login starts tmux session \"default\"" ok || check "auto tmux" "$sessions"
+
+  banner=$(on "$host" 'tmux capture-pane -p -t default -S -100 | grep -c LAB-BANNER')
+  [ "$banner" = 1 ] && check "the login banner shows inside the new session" ok || check "banner in session" "${banner:-none}"
+  second=$(on "$host" 'tmux new-window -t default; sleep 1; tmux capture-pane -p -t default -S -100 | grep -c LAB-BANNER; tmux kill-window -t default')
+  [ "$second" = 0 ] && check "a new window in the session skips the banner" ok || check "banner in new window" "$second"
 
   pane_path=$(on "$host" 'tmux send-keys -t default "echo \$PATH > /tmp/pane-path" Enter; sleep 1; cat /tmp/pane-path')
   case $pane_path in

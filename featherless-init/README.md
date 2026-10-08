@@ -15,7 +15,7 @@ This is not the template images' entrypoint (`scripts/featherless-init`); it wor
 | `/run/featherless/init` | This image, mounted read-only |
 | `/run/featherless/init/featherless-init -- <command...>` | The container command: the instance's command, or the image's ENTRYPOINT and CMD |
 | `/run/featherless/state` | Written at runtime: `init.log`, the generated `sshd_config`, the host key, the sshd PID file |
-| `/etc/profile.d/featherless.sh` | Linked to `profile.d/featherless.sh` at start; image volumes mount only directories |
+| `/etc/profile.d/00-featherless.sh` | Linked to `profile.d/featherless.sh` at start (image volumes mount only directories), named to run before the image's own profile scripts |
 | `FEATHERLESS_AUTHORIZED_KEYS_PATH` | The platform-managed keys file sshd reads on every login |
 
 The container needs `/bin/sh` and root. With no command, `tini` becomes PID 1 and keeps the
@@ -51,7 +51,9 @@ sshd runs on port 22 with its own configuration:
 
 `profile.d/featherless.sh` runs in login shells, which sshd starts only for interactive logins. It
 restores the container's `PATH` (`/etc/profile` resets it on most distributions) and attaches the
-login to the tmux session `default`, creating it if needed. `touch ~/.no_auto_tmux` opts out;
+login to the tmux session `default`, creating it if needed. It runs before the image's other profile
+scripts, so what they print, such as the template images' banner, appears inside the session; the
+banner shows once per session, in the window that created it. `touch ~/.no_auto_tmux` opts out;
 without tmux, or if tmux cannot start, the login stays a plain shell.
 
 ## Build and release
