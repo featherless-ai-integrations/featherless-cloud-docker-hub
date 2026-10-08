@@ -137,4 +137,12 @@ case $log in
 esac
 docker rm -f fl-init-busybox >/dev/null
 
+# An image without a shell runs only its command, as it would without featherless-init.
+echo "== distroless python3, no shell"
+got=$(docker run --rm --quiet --platform "linux/$arch" \
+  --mount "type=image,source=$bundle,target=/run/featherless/init" \
+  --entrypoint /run/featherless/init/featherless-init gcr.io/distroless/python3-debian12:latest \
+  -- python3 -c 'import os; print(os.getpid(), os.path.exists("/run/featherless/state"))' 2>&1)
+[ "$got" = "1 False" ] && check "the command runs as PID 1 and nothing else starts" ok || check "no shell" "$got"
+
 exit "$failed"
