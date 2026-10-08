@@ -74,6 +74,11 @@ for image in "${images[@]}"; do
   [ "$sessions" = default ] && check "interactive login starts tmux session \"default\"" ok || check "auto tmux" "$sessions"
 
   banner=$(on "$host" 'pane=$(tmux capture-pane -p -t default -S -100); echo "$(echo "$pane" | grep -c "GPU CLOUD") $(echo "$pane" | grep -c LAB-BANNER)"')
+  uptime=$(on "$host" 'tmux capture-pane -p -t default -S -100 | grep -m1 "^Uptime"')
+  case $uptime in
+    "Uptime"*" min"*) check "the banner shows the container's uptime" ok ;;
+    *) check "banner uptime" "${uptime:-none}" ;;
+  esac
   [ "$banner" = "1 0" ] && check "the Featherless banner shows inside the new session, the image's own banner does not repeat it" ok \
     || check "banner in session" "GPU CLOUD and LAB-BANNER counts: ${banner:-none}"
   second=$(on "$host" 'tmux new-window -t default; sleep 1; pane=$(tmux capture-pane -p -t default -S -100); echo "$(echo "$pane" | grep -c "GPU CLOUD") $(echo "$pane" | grep -c LAB-BANNER)"; tmux kill-window -t default')

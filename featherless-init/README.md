@@ -15,7 +15,7 @@ This is not the template images' entrypoint (`scripts/featherless-init`); it wor
 | `/run/featherless/init` | This image, mounted read-only |
 | `/run/featherless/init/featherless-init -- <command...>` | The container command: the instance's command, or the image's ENTRYPOINT and CMD |
 | `/run/featherless/init/banner` | The login banner, `scripts/featherless-login-banner`, the same one template images bake in |
-| `/run/featherless/state` | Written at runtime: `init.log`, the generated `sshd_config`, the host key, the sshd PID file, `started` (the banner's uptime in images without procps) |
+| `/run/featherless/state` | Written at runtime: `init.log`, the generated `sshd_config`, the host key, the sshd PID file |
 | `/etc/profile.d/00-featherless.sh` | Linked to `profile.d/featherless.sh` at start (image volumes mount only directories), named to run before the image's own profile scripts |
 | `FEATHERLESS_AUTHORIZED_KEYS_PATH` | The platform-managed keys file sshd reads on every login |
 

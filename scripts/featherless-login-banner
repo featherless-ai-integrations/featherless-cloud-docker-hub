@@ -88,16 +88,15 @@ storage_usage() {
   esac
 }
 
-uptime_seconds=$(ps -o etimes= -p 1 2>/dev/null | tr -d ' ')
-case "$uptime_seconds" in
-  ''|*[!0-9]*)
-    # Without procps, featherless-init's record of when the container started.
-    started=$(cat /run/featherless/state/started 2>/dev/null)
-    case "$started" in
-      ''|*[!0-9]*) ;;
-      *) uptime_seconds=$(($(date +%s) - started)) ;;
-    esac
-    ;;
+# PID 1's age from the boot time and its start tick. ps measures against
+# /proc/uptime, which LXCFS replaces with the container's own uptime.
+uptime_seconds=''
+boot_time=$(awk '/^btime / { print $2 }' /proc/stat 2>/dev/null)
+start_ticks=$(awk '{ sub(/.*\) /, ""); print $20 }' /proc/1/stat 2>/dev/null)
+clock_ticks=$(getconf CLK_TCK 2>/dev/null) || clock_ticks=100
+case "$boot_time$start_ticks$clock_ticks" in
+  ''|*[!0-9]*) ;;
+  *) uptime_seconds=$(($(date +%s) - boot_time - start_ticks / clock_ticks)) ;;
 esac
 case "$uptime_seconds" in
   ''|*[!0-9]*) uptime_summary='Unavailable' ;;
