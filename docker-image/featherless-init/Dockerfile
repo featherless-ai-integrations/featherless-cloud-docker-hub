@@ -13,3 +13,4 @@ LABEL org.opencontainers.image.source="https://github.com/featherless-ai/feather
 COPY --from=tini /sbin/tini-static /tini
 COPY --chmod=0755 featherless-init/featherless-init featherless-init/services /
 COPY --chmod=0644 featherless-init/profile.d/ /profile.d/
+COPY --chmod=0644 scripts/featherless-login-banner /banner

@@ -1,6 +1,6 @@
 # Sourced by login shells, which sshd starts only for an interactive login.
 # Linked as 00-featherless.sh so tmux starts before any other profile script
-# prints; their output, the banner among them, lands inside the session.
+# prints; their output and the banner land inside the session.
 
 # /etc/profile resets PATH on most distros; keep the container's.
 if [ -n "${FEATHERLESS_CONTAINER_PATH:-}" ]; then
@@ -29,3 +29,7 @@ elif [ -n "${SSH_TTY:-}" ] && [ ! -e "$HOME/.no_auto_tmux" ] && command -v tmux 
   TERM=$featherless_term tmux -u new-session -A -s default && exit
   unset featherless_term featherless_dir
 fi
+
+# Sets FEATHERLESS_BANNER_SHOWN, so the template images' own copy stays quiet.
+# shellcheck source=/dev/null
+. /run/featherless/init/banner

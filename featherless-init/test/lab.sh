@@ -73,9 +73,10 @@ for image in "${images[@]}"; do
   sessions=$(on "$host" 'tmux ls -F "#{session_name}"' 2>&1)
   [ "$sessions" = default ] && check "interactive login starts tmux session \"default\"" ok || check "auto tmux" "$sessions"
 
-  banner=$(on "$host" 'tmux capture-pane -p -t default -S -100 | grep -c LAB-BANNER')
-  [ "$banner" = 1 ] && check "the login banner shows inside the new session" ok || check "banner in session" "${banner:-none}"
-  second=$(on "$host" 'tmux new-window -t default; sleep 1; tmux capture-pane -p -t default -S -100 | grep -c LAB-BANNER; tmux kill-window -t default')
+  banner=$(on "$host" 'pane=$(tmux capture-pane -p -t default -S -100); echo "$(echo "$pane" | grep -c "GPU CLOUD") $(echo "$pane" | grep -c LAB-BANNER)"')
+  [ "$banner" = "1 0" ] && check "the Featherless banner shows inside the new session, the image's own banner does not repeat it" ok \
+    || check "banner in session" "GPU CLOUD and LAB-BANNER counts: ${banner:-none}"
+  second=$(on "$host" 'tmux new-window -t default; sleep 1; tmux capture-pane -p -t default -S -100 | grep -c -e "GPU CLOUD" -e LAB-BANNER; tmux kill-window -t default')
   [ "$second" = 0 ] && check "a new window in the session skips the banner" ok || check "banner in new window" "$second"
 
   pane_path=$(on "$host" 'tmux send-keys -t default "echo \$PATH > /tmp/pane-path" Enter; sleep 1; cat /tmp/pane-path')
