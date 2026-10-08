@@ -283,6 +283,16 @@ published digest. Privileges and host mounts belong in that platform manifest.
 Do not run a second daemon over an existing LXCFS mount. Validate daemon lifecycle
 and CPU/memory views on a disposable worker before attaching customer Pods.
 
+## Instance init image
+
+`featherless-init` (`featherlesscloud/featherless-init`) is mounted read-only into
+instance containers and runs in front of any image's own command: it installs
+sshd and tmux when the image lacks them, serves SSH on port 22, and puts
+interactive logins in the tmux session `default`. It is built `FROM scratch`
+around static `tini` and is separate from the template images'
+`scripts/featherless-init` entrypoint. See
+[featherless-init/README.md](featherless-init/README.md).
+
 ## Run on an MI325X host
 
 ROCm containers need `/dev/kfd`, `/dev/dri`, the video group, and generous shared

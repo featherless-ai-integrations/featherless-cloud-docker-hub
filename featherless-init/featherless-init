@@ -1,0 +1,25 @@
+#!/bin/sh
+# featherless-init [--] [command...]
+#
+# Starts the platform's SSH side in the background, then replaces itself with
+# the instance's command, which keeps PID 1, its signals and its exit code.
+# Nothing it starts writes to the container's output.
+here=$(dirname "$0")
+state=/run/featherless/state
+mkdir -p "$state"
+
+# Image volumes mount only directories, so the login hook is linked in.
+if [ -d /etc/profile.d ]; then
+  ln -sf "$here/profile.d/featherless.sh" /etc/profile.d/featherless.sh
+fi
+
+if [ "${1:-}" = "--" ]; then
+  shift
+fi
+
+if [ $# -eq 0 ]; then
+  exec "$here/tini" -- "$here/services" </dev/null >>"$state/init.log" 2>&1
+fi
+
+"$here/tini" -s -- "$here/services" </dev/null >>"$state/init.log" 2>&1 &
+exec "$@"
