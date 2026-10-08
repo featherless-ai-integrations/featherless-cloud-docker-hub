@@ -31,7 +31,7 @@ docker run -d --name fl-init-client --network fl-init-lab -v "$work:/lab:ro" alp
 docker exec fl-init-client sh -c 'apk add -q openssh-client >/dev/null && install -m 0600 /lab/id_ed25519 /root/id && head -c 1048576 /dev/urandom > /tmp/blob'
 opts="-i /root/id -p 22 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes"
 on() { local host=$1; shift; docker exec fl-init-client ssh $opts "root@$host" "$@"; }
-tty_session() { docker exec -e TERM=xterm-256color fl-init-client sh -c "{ sleep 4; printf '%s' \"\$0\"; sleep 2; } | timeout 20 ssh -tt $opts root@$1 2>&1 | tr -d '\r'" "$2"; }
+tty_session() { docker exec -e TERM="${3:-xterm-256color}" fl-init-client sh -c "{ sleep 4; printf '%s' \"\$0\"; sleep 2; } | timeout 20 ssh -tt $opts root@$1 2>&1 | tr -d '\r'" "$2"; }
 failed=0
 check() { if [ "$2" = ok ]; then printf '  ok    %s\n' "$1"; else printf '  FAIL  %s: %s\n' "$1" "$2"; failed=1; fi; }
 
@@ -88,6 +88,11 @@ for image in "${images[@]}"; do
   plain=$(tty_session "$host" $'echo "tmux=[$TMUX]"; exit\n' | grep -o 'tmux=\[[^]]*\]' | tail -1)
   [ "$plain" = "tmux=[]" ] && check "~/.no_auto_tmux opts out" ok || check "opt-out" "${plain:-no shell output}"
   on "$host" 'rm ~/.no_auto_tmux'
+
+  on "$host" 'tmux kill-server'
+  tty_session "$host" $'\002d' xterm-ghostty >/dev/null
+  sessions=$(on "$host" 'tmux ls -F "#{session_name}"' 2>&1)
+  [ "$sessions" = default ] && check "a terminal the image has no terminfo for still starts tmux" ok || check "unknown TERM" "$sessions"
 
   docker exec fl-init-client sh -c "scp -q -i /root/id -P 22 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR /tmp/blob root@$host:/tmp/blob && scp -q -i /root/id -P 22 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@$host:/tmp/blob /tmp/blob.back && cmp -s /tmp/blob /tmp/blob.back" \
     && check "scp round trip" ok || check "scp" "failed"
