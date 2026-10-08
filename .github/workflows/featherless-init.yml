@@ -1,0 +1,34 @@
+name: featherless-init
+
+on:
+  pull_request:
+    paths:
+      - featherless-init/**
+      - templates/featherless-init.Dockerfile
+      - docker-image/featherless-init/**
+      - .github/workflows/featherless-init.yml
+  push:
+    branches: [main]
+    paths:
+      - featherless-init/**
+      - templates/featherless-init.Dockerfile
+      - docker-image/featherless-init/**
+      - .github/workflows/featherless-init.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lab:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint the scripts
+        run: shellcheck -s sh featherless-init/featherless-init featherless-init/services featherless-init/profile.d/featherless.sh
+
+      # Runs the image from Docker image mounts, as instances mount it, and checks the instance
+      # command, SSH, tmux, sshd restarts, zombie reaping and SIGTERM in each base image.
+      - name: Run the instance lab
+        run: featherless-init/test/lab.sh ubuntu:24.04 debian:trixie-slim rockylinux/rockylinux:9 alpine:3.22

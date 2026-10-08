@@ -25,7 +25,8 @@ docker exec fl-init-client sh -c 'apk add -q openssh-client >/dev/null && instal
 opts="-i /root/id -p 22 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes"
 on() { local host=$1; shift; docker exec fl-init-client ssh $opts "root@$host" "$@"; }
 tty_session() { docker exec -e TERM=xterm-256color fl-init-client sh -c "{ sleep 4; printf '%s' \"\$0\"; sleep 2; } | timeout 20 ssh -tt $opts root@$1 2>&1 | tr -d '\r'" "$2"; }
-check() { if [ "$2" = ok ]; then printf '  ok    %s\n' "$1"; else printf '  FAIL  %s: %s\n' "$1" "$2"; fi; }
+failed=0
+check() { if [ "$2" = ok ]; then printf '  ok    %s\n' "$1"; else printf '  FAIL  %s: %s\n' "$1" "$2"; failed=1; fi; }
 
 for image in "${images[@]}"; do
   host=fl-init-$(echo "$image" | tr -c 'a-z0-9\n' '-' | sed 's/-*$//')
@@ -98,3 +99,5 @@ for image in "${images[@]}"; do
   docker cp "$host:/run/featherless/state/init.log" "$work/init.log" >/dev/null 2>&1 && grep -E 'Installed|Could not|No ' "$work/init.log" | sed 's/^/        /'
   docker rm -f "$host" >/dev/null
 done
+
+exit "$failed"
