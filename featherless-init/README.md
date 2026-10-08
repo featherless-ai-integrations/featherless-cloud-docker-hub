@@ -20,9 +20,9 @@ This is not the template images' entrypoint (`scripts/featherless-init`); it wor
 | `/etc/profile.d/00-featherless.sh` | Linked to `profile.d/featherless.sh` at start (image volumes mount only directories), named to run before the image's own profile scripts |
 | `FEATHERLESS_AUTHORIZED_KEYS_PATH` | The platform-managed keys file sshd reads on every login |
 
-An image without `/bin/sh` runs only its command, exactly as without featherless-init: there is
-nothing for SSH to log in to. The SSH side needs root. With no command, `tini` becomes PID 1 and
-keeps the container up.
+An image without `/bin/sh`, or one that runs as a non-root user, runs only its command, exactly as
+without featherless-init: there is nothing for SSH to log in to, or no way to set it up. With no
+command, `tini` becomes PID 1 and keeps the container up.
 
 ## What runs
 
