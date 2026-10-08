@@ -1,9 +1,17 @@
-#!/bin/sh
+#!/run/featherless/init/sh
 # featherless-init [--] [command...]
 #
 # Starts the platform's SSH side in the background, then replaces itself with
 # the instance's command, which keeps PID 1, its signals and its exit code.
 # Nothing it starts writes to the container's output.
+
+# An image without a shell has nothing to log in to: run only its command.
+if [ ! -x /bin/sh ]; then
+  [ "${1:-}" = "--" ] && shift
+  [ $# -gt 0 ] || { echo "featherless-init: no command to run" >&2; exit 127; }
+  exec "$@"
+fi
+
 here=$(dirname "$0")
 state=/run/featherless/state
 mkdir -p "$state"
