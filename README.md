@@ -258,11 +258,12 @@ GitHub Actions image build; the other native packages were not rebuilt in this r
 ## Instance init image
 
 `featherless-init` (`featherlesscloud/featherless-init`) is mounted read-only into
-instance containers and runs in front of any image's own command: it installs
-sshd and tmux when the image lacks them, serves SSH on port 22, and puts
-interactive logins in the tmux session `default`. It is built `FROM scratch`
-around static `tini` and is separate from the template images'
-`scripts/featherless-init` entrypoint. See
+every custom-image and template instance and runs in front of the image's own
+command: it installs sshd when the image lacks it, serves SSH on port 22 with a
+bundled tmux, and puts interactive logins in the tmux session `default`. It is
+built `FROM scratch` around static `tini` and is separate from the template
+images' `scripts/featherless-init` entrypoint, which then leaves SSH to it and
+keeps the MI325X check, JupyterLab and the startup command. See
 [featherless-init/README.md](featherless-init/README.md).
 
 ## Run on an MI325X host
@@ -285,7 +286,7 @@ on port 8888, set `ENABLE_JUPYTER=true`; persisted notebooks live in the
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ENABLE_SSH` | `true` | Start OpenSSH (`true/false`, `1/0`, `yes/no`) |
+| `ENABLE_SSH` | `true` | Serve SSH (`true/false`, `1/0`, `yes/no`); when Featherless Cloud mounts its instance init at `/run/featherless/init`, the launcher leaves SSH to it |
 | `SSH_PORT` | `22` | SSH port inside the container |
 | `SSH_PUBLIC_KEY` | empty | Public key installed for `CLOUD_USER` |
 | `SSH_PASSWORD` | empty | Enables password login when non-empty |

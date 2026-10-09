@@ -1,12 +1,15 @@
 # featherless-init (instance init)
 
-A custom image starts with its own entrypoint and usually has no sshd and no tmux, so platform SSH
-and the shared tmux session would otherwise work only on our template images. Featherless Cloud
-mounts this image read-only into every instance container and runs it in front of the instance's
-own command: it starts the SSH side in the background, then becomes that command, which keeps PID
-1, its signals and its exit code. Nothing it starts writes to the container's output.
+A custom image starts with its own entrypoint and usually has no sshd and no tmux. Featherless
+Cloud mounts this image read-only into every custom-image and template instance and runs it in
+front of the instance's own command: it starts the SSH side in the background, then becomes that
+command, which keeps PID 1, its signals and its exit code. Nothing it starts writes to the
+container's output. SSH, tmux and the login banner then behave the same in every instance.
 
-This is not the template images' entrypoint (`scripts/featherless-init`); it works in any image.
+This is not the template images' entrypoint (`scripts/featherless-init`), which still runs after
+it: their template files set `bootstrapVersion: "2"`, and the launcher sees this init at
+`/run/featherless/init/featherless-init`, leaves SSH to it and keeps the MI325X check, JupyterLab
+and the startup command.
 
 ## Contract
 
@@ -87,7 +90,9 @@ mount in each base image, with a client container standing in for the SSH gatewa
 Docker 28 or later and network access for package installs.
 
 The `featherless-init` workflow lints the scripts and runs `test/lab.sh` on Ubuntu, Debian,
-Rocky and Alpine for every change to the image. It exits non-zero when a check fails, and checks:
+Rocky, Fedora, UBI, openSUSE and Alpine for every change to the image or the template launcher, and
+`test/lab.sh template` on a template image built on Ubuntu. It exits non-zero when a check fails,
+and checks:
 - the instance command is PID 1 and owns the container's output;
 - SSH login and environment;
 - the `default` tmux session runs the bundled tmux, and the opt-out;
@@ -96,4 +101,6 @@ Rocky and Alpine for every change to the image. It exits non-zero when a check f
 - scp;
 - sshd restarts;
 - zombie reaping;
-- SIGTERM.
+- SIGTERM;
+- in a template image, that only this init's sshd runs, the launcher keeps the container up, and
+  the banner shows once.

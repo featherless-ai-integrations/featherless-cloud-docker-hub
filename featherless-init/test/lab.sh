@@ -2,7 +2,8 @@
 # Runs featherless-init from a Docker image mount in each base image, the way an
 # instance Pod mounts it, and checks the instance command and the SSH side.
 #
-#   test/lab.sh [image...]        defaults to a matrix of common base images
+#   test/lab.sh [image...]        defaults to a matrix of common base images; "template" runs
+#                                 a template image behind the init
 #
 # Needs Docker 28+ (image mounts) and network access for package installs.
 set -u
@@ -35,7 +36,72 @@ tty_session() { docker exec -e TERM="${3:-xterm-256color}" fl-init-client sh -c 
 failed=0
 check() { if [ "$2" = ok ]; then printf '  ok    %s\n' "$1"; else printf '  FAIL  %s: %s\n' "$1" "$2"; failed=1; fi; }
 
+# A template image behind the init, as a bootstrap 2 template instance runs: its ENTRYPOINT and
+# CMD after `featherless-init --`. Built on Ubuntu, since the ROCm bases are amd64 only and huge.
+template_lab() {
+  local host=fl-init-template image=featherless-template:lab-$arch
+  echo "== template image on ubuntu:24.04 ($arch)"
+  docker build -q --platform "linux/$arch" --build-arg BASE_IMAGE=ubuntu:24.04 -f "$root/Dockerfile" -t "$image" "$root" >/dev/null \
+    || { check "template image builds" "docker build failed"; return; }
+  docker rm -f "$host" >/dev/null 2>&1
+  docker run -d --name "$host" --network fl-init-lab --platform "linux/$arch" \
+    --mount "type=image,source=$bundle,target=/run/featherless/init" \
+    -v "$work/keys:/run/featherless/ssh:ro" \
+    -e FEATHERLESS_AUTHORIZED_KEYS_PATH=/run/featherless/ssh/authorized_keys -e REQUIRE_MI325X=false \
+    --entrypoint /run/featherless/init/featherless-init "$image" \
+    -- /usr/bin/tini -- /usr/local/bin/featherless-init run >/dev/null
+
+  local started
+  started=$(date +%s)
+  until on "$host" true >/dev/null 2>&1; do
+    [ $(($(date +%s) - started)) -lt 120 ] || break
+    sleep 2
+  done
+  if ! on "$host" true >/dev/null 2>&1; then
+    check "SSH ready" "not after 120 s; init.log: $(docker exec "$host" tail -3 /run/featherless/state/init.log | tr '\n' ' ')"
+    docker rm -f "$host" >/dev/null
+    return
+  fi
+  check "SSH ready after $(($(date +%s) - started)) s" ok
+
+  sleep 5
+  local listeners
+  # sshd retitles its listener "sshd: <command line> [listener] ...".
+  listeners=$(docker exec "$host" sh -c 'for p in /proc/[0-9]*; do tr "\0" " " <$p/cmdline 2>/dev/null; echo; done | grep "\[listener\]"')
+  case $listeners in
+    *$'\n'*) false ;;
+    "sshd: /usr/sbin/sshd -D -e -f /run/featherless/state/sshd_config [listener]"*) true ;;
+    *) false ;;
+  esac \
+    && check "only the init's sshd serves port 22; the template's launcher starts none" ok \
+    || check "sshd processes" "$(echo "$listeners" | tr '\n' ';')"
+  docker logs "$host" 2>&1 | grep -q "SSH is served by the platform's featherless-init" \
+    && check "the launcher says SSH is left to the init" ok || check "launcher log" "$(docker logs "$host" 2>&1 | tail -2 | tr '\n' ' ')"
+
+  tty_session "$host" $'\002d' >/dev/null
+  local sessions server banner
+  sessions=$(on "$host" 'tmux ls -F "#{session_name}"' 2>&1)
+  [ "$sessions" = default ] && check "interactive login starts tmux session \"default\"" ok || check "auto tmux" "$sessions"
+  server=$(on "$host" 'readlink /proc/$(tmux display-message -p -t default "#{pid}")/exe')
+  [ "$server" = /run/featherless/init/bin/tmux ] && check "the bundled tmux runs the session, not the image's" ok || check "bundled tmux" "${server:-none}"
+  banner=$(on "$host" 'tmux capture-pane -p -t default -S -100 | grep -c "GPU CLOUD"')
+  [ "$banner" = 1 ] && check "the banner shows once; the image's own copy stays quiet" ok || check "banner count" "${banner:-none}"
+
+  [ "$(docker inspect -f '{{.State.Running}}' "$host")" = true ] && check "the container stays up with nothing but SSH to serve" ok \
+    || check "container" "exited $(docker inspect -f '{{.State.ExitCode}}' "$host"): $(docker logs "$host" 2>&1 | tail -2 | tr '\n' ' ')"
+
+  docker stop -t 10 "$host" >/dev/null
+  local code
+  code=$(docker inspect -f '{{.State.ExitCode}}' "$host")
+  [ "$code" = 0 ] && check "SIGTERM stops the launcher cleanly" ok || check "SIGTERM" "exit code $code"
+  docker rm -f "$host" >/dev/null
+}
+
 for image in "${images[@]}"; do
+  if [ "$image" = template ]; then
+    template_lab
+    continue
+  fi
   host=fl-init-$(echo "$image" | tr -c 'a-z0-9\n' '-' | sed 's/-*$//')
   docker rm -f "$host" >/dev/null 2>&1
   echo "== $image ($arch)"

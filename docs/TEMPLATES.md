@@ -35,7 +35,7 @@ and the icon.
 | `description` | string | No | Shared by every entry of this file. |
 | `startupCommand` | string | No | Default `""`, which runs the image entrypoint `featherless-init run`. |
 | `environment` | list of `{name, value}` | No | Default `[]`. |
-| `bootstrapVersion` | string | No | Default `"1"`. |
+| `bootstrapVersion` | string | No | Default `"1"`: the image serves SSH itself. `"2"`: Featherless Cloud mounts [featherless-init](../featherless-init/README.md) in front of the image's entrypoint and serves SSH, tmux and the login banner; every template here uses it. |
 | `versions` | list | Yes | At least one entry, one per published image tag. |
 
 ## Version entry fields
@@ -70,7 +70,7 @@ description: AMD ROCm PyTorch on MI325X with SSH and JupyterLab.
 image: featherlesscloud/rocm-pytorch
 startupCommand: ""
 environment: []
-bootstrapVersion: "1"
+bootstrapVersion: "2"
 versions:
   - version: "2.12.0"
     tag: rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0

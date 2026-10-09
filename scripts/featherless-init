@@ -2,6 +2,9 @@
 set -Eeuo pipefail
 
 log() { printf '[featherless-init] %s\n' "$*" >&2; }
+# The instance init Featherless Cloud mounts into bootstrap 2 template instances
+# (featherless-init/README.md); not this launcher.
+PLATFORM_INIT=/run/featherless/init/featherless-init
 die() { log "ERROR: $*"; exit 1; }
 is_true() { case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in 1|true|yes|on) return 0 ;; *) return 1 ;; esac; }
 
@@ -228,11 +231,19 @@ serve() {
     is_true "$mi325x_detected" ||
       die "MI325X validation failed: expected PCI device 1002:74a5"
   fi
+  local platform_ssh=false
   if is_true "${ENABLE_SSH:-true}"; then
-    (( EUID == 0 )) || die "sshd must be started as root"
-    configure_ssh
-    log "Starting sshd on port ${SSH_PORT:-22}"
-    /usr/sbin/sshd -D -e & pids+=("$!")
+    if [[ -x "$PLATFORM_INIT" ]]; then
+      # Featherless Cloud mounts its instance init in front of this launcher and
+      # serves SSH, tmux and the banner itself; a second sshd could not bind.
+      platform_ssh=true
+      log "SSH is served by the platform's featherless-init"
+    else
+      (( EUID == 0 )) || die "sshd must be started as root"
+      configure_ssh
+      log "Starting sshd on port ${SSH_PORT:-22}"
+      /usr/sbin/sshd -D -e & pids+=("$!")
+    fi
   fi
   if is_true "${ENABLE_JUPYTER:-false}"; then
     command -v jupyter >/dev/null 2>&1 || die "jupyter is not installed; run '$0 install' first"
@@ -251,6 +262,10 @@ serve() {
   if (($# > 0)); then
     log "Starting custom command"
     "$@" & pids+=("$!")
+  fi
+  # SSH alone keeps the instance up, wherever it is served.
+  if ((${#pids[@]} == 0)) && [[ "$platform_ssh" == true ]]; then
+    sleep infinity & pids+=("$!")
   fi
   ((${#pids[@]} > 0)) || die "no service or custom command enabled"
 

@@ -5,16 +5,22 @@ on:
     paths:
       - featherless-init/**
       - scripts/featherless-login-banner
+      - scripts/featherless-init
       - templates/featherless-init.Dockerfile
+      - templates/rocm.Dockerfile
       - docker-image/featherless-init/**
+      - Dockerfile
       - .github/workflows/featherless-init.yml
   push:
     branches: [main]
     paths:
       - featherless-init/**
       - scripts/featherless-login-banner
+      - scripts/featherless-init
       - templates/featherless-init.Dockerfile
+      - templates/rocm.Dockerfile
       - docker-image/featherless-init/**
+      - Dockerfile
       - .github/workflows/featherless-init.yml
   workflow_dispatch:
 
@@ -48,6 +54,8 @@ jobs:
           - registry.access.redhat.com/ubi9-minimal:latest
           - opensuse/leap:15.6
           - alpine:3.22
+          # A template image (scripts/featherless-init) behind the init, built on Ubuntu.
+          - template
     steps:
       - uses: actions/checkout@v7
 
