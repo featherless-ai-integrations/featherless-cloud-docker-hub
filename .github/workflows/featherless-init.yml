@@ -35,10 +35,19 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       # Each distro gets its own runner: the package-manager install, SSH, tmux and signal
-      # checks for one image must not hide a failure in another.
+      # checks for one image must not hide a failure in another. The images cover every
+      # installer the init probes (apt, dnf, dnf5, microdnf, apk, zypper); yum remains only
+      # on the EOL RHEL 7.
       fail-fast: false
       matrix:
-        image: [ubuntu:24.04, debian:trixie-slim, rockylinux/rockylinux:9, alpine:3.22]
+        image:
+          - ubuntu:24.04
+          - debian:trixie-slim
+          - rockylinux/rockylinux:9
+          - fedora:42
+          - registry.access.redhat.com/ubi9-minimal:latest
+          - opensuse/leap:15.6
+          - alpine:3.22
     steps:
       - uses: actions/checkout@v4
 
