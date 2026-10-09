@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 jobs:
-  lab:
+  lint:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +30,19 @@ jobs:
       - name: Lint the scripts
         run: shellcheck -s sh featherless-init/featherless-init featherless-init/services featherless-init/profile.d/featherless.sh
 
+  lab:
+    name: lab (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    strategy:
+      # Each distro gets its own runner: the package-manager install, SSH, tmux and signal
+      # checks for one image must not hide a failure in another.
+      fail-fast: false
+      matrix:
+        image: [ubuntu:24.04, debian:trixie-slim, rockylinux/rockylinux:9, alpine:3.22]
+    steps:
+      - uses: actions/checkout@v4
+
       # Runs the image from Docker image mounts, as instances mount it, and checks the instance
-      # command, SSH, tmux, sshd restarts, zombie reaping and SIGTERM in each base image.
+      # command, SSH, tmux, sshd restarts, zombie reaping and SIGTERM in the base image.
       - name: Run the instance lab
-        run: featherless-init/test/lab.sh ubuntu:24.04 debian:trixie-slim rockylinux/rockylinux:9 alpine:3.22
+        run: featherless-init/test/lab.sh '${{ matrix.image }}'
