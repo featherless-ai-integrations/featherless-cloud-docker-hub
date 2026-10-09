@@ -72,6 +72,10 @@ for image in "${images[@]}"; do
   tty_session "$host" $'\002d' >/dev/null
   sessions=$(on "$host" 'tmux ls -F "#{session_name}"' 2>&1)
   [ "$sessions" = default ] && check "interactive login starts tmux session \"default\"" ok || check "auto tmux" "$sessions"
+  server=$(on "$host" 'tmux display-message -p -t default "#{pid}"; command -v tmux')
+  server_bin=$(on "$host" "readlink /proc/$(echo "$server" | head -1)/exe")
+  [ "$(echo "$server" | tail -1) $server_bin" = "/run/featherless/init/bin/tmux /run/featherless/init/bin/tmux" ] \
+    && check "the bundled tmux runs the session and answers on PATH" ok || check "bundled tmux" "server ${server_bin:-none}, PATH $(echo "$server" | tail -1)"
 
   banner=$(on "$host" 'pane=$(tmux capture-pane -p -t default -S -100); echo "$(echo "$pane" | grep -c "GPU CLOUD") $(echo "$pane" | grep -c LAB-BANNER)"')
   uptime=$(on "$host" 'tmux capture-pane -p -t default -S -100 | grep -m1 "^Uptime"')
@@ -135,6 +139,9 @@ case $log in
   *"No sshd; SSH is unavailable"*) check "SSH is reported unavailable without retrying" ok ;;
   *) check "no package manager" "$(echo "$log" | tail -2 | tr '\n' ' ')" ;;
 esac
+# The browser terminal still gets tmux: the bundle needs neither a package manager nor terminfo.
+got=$(docker exec fl-init-busybox /bin/sh -c 'PATH=/run/featherless/init/bin:$PATH; tmux new-session -d -s default && tmux ls -F "#{session_name}"')
+[ "$got" = default ] && check "the bundled tmux runs without a package manager" ok || check "tmux without a package manager" "${got:-none}"
 docker rm -f fl-init-busybox >/dev/null
 
 # An image without a shell runs only its command, as it would without featherless-init.
@@ -152,5 +159,10 @@ got=$(docker run --rm --quiet --platform "linux/$arch" --user 1000 \
   --mount "type=image,source=$bundle,target=/run/featherless/init" \
   --entrypoint /run/featherless/init/featherless-init debian:trixie-slim -- sh -c 'echo "$$"')
 [ "$got" = 1 ] && check "the command runs as PID 1 and the output is only its own" ok || check "non-root" "$(echo "$got" | tr '\n' ' ')"
+got=$(docker run --rm --quiet --platform "linux/$arch" --user 1000 \
+  --mount "type=image,source=$bundle,target=/run/featherless/init" \
+  --entrypoint /run/featherless/init/featherless-init debian:trixie-slim \
+  -- sh -c 'PATH=/run/featherless/init/bin:$PATH; tmux new-session -d -s default && tmux ls -F "#{session_name}"')
+[ "$got" = default ] && check "the bundled tmux runs as a non-root user" ok || check "non-root tmux" "${got:-none}"
 
 exit "$failed"

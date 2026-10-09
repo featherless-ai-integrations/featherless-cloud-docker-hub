@@ -1,9 +1,15 @@
 #!/bin/sh
 # Runs under `tini -s`, which reaps whatever SSH sessions leave behind. Installs
-# sshd and tmux with the image's package manager when either is missing, then
-# keeps sshd running on port 22 with its own configuration.
+# sshd with the image's package manager when it is missing, then keeps it
+# running on port 22 with its own configuration.
 state=/run/featherless/state
 port=22
+
+# SSH sessions inherit both: the bundled tmux comes first, so every client
+# matches the server's version, and its terminal definitions come last.
+PATH=/run/featherless/init/bin:$PATH
+TERMINFO_DIRS=${TERMINFO_DIRS:+$TERMINFO_DIRS:}/etc/terminfo:/lib/terminfo:/usr/share/terminfo:/usr/lib/terminfo:/run/featherless/init/terminfo
+export PATH TERMINFO_DIRS
 
 log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
@@ -49,7 +55,6 @@ install_packages() {
 
 find_missing() {
   missing=
-  command -v tmux >/dev/null 2>&1 || missing="$missing tmux"
   [ -n "$(find_sshd)" ] || missing="$missing openssh-server"
 }
 

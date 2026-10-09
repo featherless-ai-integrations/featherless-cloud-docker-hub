@@ -12,10 +12,7 @@ if [ -z "${TMUX:-}" ] && [ -n "${SSH_TTY:-}" ] && [ ! -e "$HOME/.no_auto_tmux" ]
   # Every SSH login lands in the shared session "default". Opt out with: touch ~/.no_auto_tmux
   # tmux refuses a terminal the image has no terminfo entry for (xterm-ghostty, xterm-kitty).
   featherless_term=xterm-256color
-  # SUSE's tmux listens under /run/tmux/<uid>, a directory systemd-tmpfiles creates at
-  # boot; a container has no boot, so the login shell creates it. Harmless elsewhere.
-  mkdir -p "/run/tmux/$(id -u)" 2>/dev/null
-  for featherless_dir in "${TERMINFO:-}" "$HOME/.terminfo" /etc/terminfo /lib/terminfo /usr/share/terminfo /usr/lib/terminfo; do
+  for featherless_dir in "${TERMINFO:-}" "$HOME/.terminfo" /etc/terminfo /lib/terminfo /usr/share/terminfo /usr/lib/terminfo /run/featherless/init/terminfo; do
     if [ -n "$featherless_dir" ] && [ -n "${TERM:-}" ] && [ -e "$featherless_dir/$(printf %.1s "$TERM")/$TERM" ]; then
       featherless_term=$TERM
     fi

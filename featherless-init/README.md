@@ -15,6 +15,8 @@ This is not the template images' entrypoint (`scripts/featherless-init`); it wor
 | `/run/featherless/init` | This image, mounted read-only |
 | `/run/featherless/init/featherless-init -- <command...>` | The container command: the instance's command, or the image's ENTRYPOINT and CMD |
 | `/run/featherless/init/sh` | Static busybox, featherless-init's interpreter, so it starts in images without a shell |
+| `/run/featherless/init/bin/tmux` | Static tmux (`FEATHERLESS_INIT_TMUX_VERSION`), the only file in `bin/` |
+| `/run/featherless/init/terminfo` | Terminal definitions (`xterm-256color`, `tmux-256color`, `screen-256color` and a few basics) for images that ship none |
 | `/run/featherless/init/banner` | The login banner, `scripts/featherless-login-banner`, the same one template images bake in |
 | `/run/featherless/state` | Written at runtime: `init.log`, the generated `sshd_config`, the host key, the sshd PID file |
 | `/etc/profile.d/00-featherless.sh` | Linked to `profile.d/featherless.sh` at start (image volumes mount only directories), named to run before the image's own profile scripts |
@@ -33,9 +35,16 @@ PID 1  <instance command>
       └─ sshd -D -p 22          restarted 5 s after it exits
 ```
 
-`services` installs `openssh-server` and `tmux` with the image's package manager (`apt-get`, `dnf`,
-`microdnf`, `yum`, `apk` or `zypper`) when either is missing, adding only what is missing and never
-upgrading what the image already has. The instance command does not wait for it. A busy package
+tmux is bundled, so it works from the container's first second in any image with `/bin/sh`, as any
+user, with or without a package manager. Every client of a tmux server must be the server's
+version, so whatever starts or attaches tmux puts `bin/` first on `PATH`: SSH sessions get it from
+`services`, and the cluster agent's tmux commands set it themselves. Shells in tmux panes inherit
+it, so `tmux` typed inside a session is the bundled one even when the image has its own.
+`TERMINFO_DIRS` lists the usual system directories, then the bundled definitions.
+
+`services` installs `openssh-server` with the image's package manager (`apt-get`, `dnf`,
+`microdnf`, `yum`, `apk` or `zypper`) when it is missing, never upgrading what the image already
+has. The instance command does not wait for it. A busy package
 manager (the instance command's own `apt-get`, say) is retried with backoff; each attempt has a
 time limit. Without a package manager or the packages, SSH stays unavailable and `init.log` says
 why.
@@ -81,7 +90,8 @@ The `featherless-init` workflow lints the scripts and runs `test/lab.sh` on Ubun
 Rocky and Alpine for every change to the image. It exits non-zero when a check fails, and checks:
 - the instance command is PID 1 and owns the container's output;
 - SSH login and environment;
-- the `default` tmux session and the opt-out;
+- the `default` tmux session runs the bundled tmux, and the opt-out;
+- the bundled tmux without a package manager and as a non-root user;
 - `PATH` in login shells;
 - scp;
 - sshd restarts;

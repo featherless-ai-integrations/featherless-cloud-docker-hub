@@ -17,6 +17,8 @@ render() {
       -e "s|@@DESCRIPTION@@|${description}|g" \
       -e "s|@@AXOLOTL_COMMIT@@|${AXOLOTL_COMMIT}|g" \
       -e "s|@@AXOLOTL_VERSION@@|${AXOLOTL_VERSION}|g" \
+      -e "s|@@TMUX_VERSION@@|${FEATHERLESS_INIT_TMUX_VERSION}|g" \
+      -e "s|@@TMUX_SHA256@@|${FEATHERLESS_INIT_TMUX_SHA256}|g" \
       "${source_templates[@]}" > "$temporary"
 
   if $check; then
