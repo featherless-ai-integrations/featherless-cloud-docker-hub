@@ -15,9 +15,10 @@ render() {
   temporary="$(mktemp)"
   sed -e "s|@@BASE_IMAGE@@|${base}|g" \
       -e "s|@@DESCRIPTION@@|${description}|g" \
-      -e "s|@@LXCFS_PACKAGE_VERSION@@|${LXCFS_PACKAGE_VERSION}|g" \
       -e "s|@@AXOLOTL_COMMIT@@|${AXOLOTL_COMMIT}|g" \
       -e "s|@@AXOLOTL_VERSION@@|${AXOLOTL_VERSION}|g" \
+      -e "s|@@TMUX_VERSION@@|${FEATHERLESS_INIT_TMUX_VERSION}|g" \
+      -e "s|@@TMUX_SHA256@@|${FEATHERLESS_INIT_TMUX_SHA256}|g" \
       "${source_templates[@]}" > "$temporary"
 
   if $check; then
@@ -52,7 +53,7 @@ render docker-image/rocm-axolotl/Dockerfile \
   "$template" \
   "$repo_root/templates/axolotl.Dockerfile"
 
-render docker-image/core-lxcfs/Dockerfile \
-  "$LXCFS_BASE" \
-  "Featherless Cloud LXCFS node service" \
-  "$repo_root/templates/core-lxcfs.Dockerfile"
+render docker-image/featherless-init/Dockerfile \
+  "$FEATHERLESS_INIT_BASE" \
+  "Featherless Cloud instance init, mounted into instance containers" \
+  "$repo_root/templates/featherless-init.Dockerfile"

@@ -20,7 +20,7 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.value }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify generated Dockerfiles
         run: scripts/render-dockerfiles --check
       - name: Read pinned release matrix
@@ -39,7 +39,7 @@ jobs:
       SHOULD_PUSH: ${{ github.event_name != 'pull_request' }}
       CREATE_NEW_USER: ${{ vars.CREATE_NEW_USER || 'false' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Verify published Axolotl native wheel before pulling the large base
         if: matrix.target == 'axolotl'
@@ -69,7 +69,7 @@ jobs:
           test -n "$DOCKERHUB_USERNAME" || { echo 'Missing secret DOCKERHUB_USERNAME' >&2; exit 1; }
           test -n "$DOCKERHUB_TOKEN" || { echo 'Missing secret DOCKERHUB_TOKEN' >&2; exit 1; }
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         if: env.SHOULD_PUSH == 'true'
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -123,19 +123,18 @@ jobs:
             --tag "$SHA_IMAGE" \
             .
 
-      - name: Check LXCFS image tools
-        if: matrix.target == 'core-lxcfs'
+      - name: Check featherless-init image contents
+        if: matrix.target == 'featherless-init'
         env:
           BUILT_IMAGE: ${{ env.OUTPUT_NAMESPACE }}/${{ matrix.repository }}:${{ matrix.version }}
         run: |
-          docker run --rm "$BUILT_IMAGE" --version
-          docker run --rm --entrypoint /bin/sh "$BUILT_IMAGE" -ec '
-            command -v nsenter
-            command -v mountpoint
-            command -v timeout
-            command -v fusermount3
-            lxcfs --help 2>&1 | grep -q -- --enable-cfs
-          '
+          docker run --rm --entrypoint /tini "$BUILT_IMAGE" --version
+          docker create --name featherless-init-contents "$BUILT_IMAGE" /tini >/dev/null
+          contents=$(docker export featherless-init-contents | tar -t | sort | tee /dev/stderr)
+          grep -qx 'profile.d/featherless.sh' <<<"$contents"
+          grep -qx 'banner' <<<"$contents"
+          grep -qx 'sh' <<<"$contents"
+          docker rm featherless-init-contents >/dev/null
 
       - name: Check Axolotl lifecycle and environment without a GPU
         if: matrix.target == 'axolotl'

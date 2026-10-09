@@ -1,0 +1,161 @@
+#!/bin/sh
+# Runs under `tini -s`, which reaps whatever SSH sessions leave behind. Installs
+# sshd with the image's package manager when it is missing, then keeps it
+# running on port 22 with its own configuration.
+state=/run/featherless/state
+port=22
+
+# SSH sessions inherit both: the bundled tmux comes first, so every client
+# matches the server's version, and its terminal definitions come last.
+PATH=/run/featherless/init/bin:$PATH
+TERMINFO_DIRS=${TERMINFO_DIRS:+$TERMINFO_DIRS:}/etc/terminfo:/lib/terminfo:/usr/share/terminfo:/usr/lib/terminfo:/run/featherless/init/terminfo
+export PATH TERMINFO_DIRS
+
+log() {
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+find_sshd() {
+  command -v sshd 2>/dev/null || { [ -x /usr/sbin/sshd ] && echo /usr/sbin/sshd; }
+}
+
+# A stuck repository must not hold the install forever.
+run() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 600 "$@"
+  else
+    "$@"
+  fi
+}
+
+# Adds only what is missing and never upgrades what the image already has.
+install_packages() {
+  if command -v apt-get >/dev/null 2>&1; then
+    run apt-get -o DPkg::Lock::Timeout=300 update -qq \
+      && run env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -qq \
+        --no-install-recommends --no-upgrade "$@"
+  elif command -v dnf >/dev/null 2>&1; then
+    run dnf install -y -q --setopt=install_weak_deps=False "$@"
+  elif command -v microdnf >/dev/null 2>&1; then
+    # RHEL's minimal images ship AppStream disabled, where tmux and openssh-server live;
+    # the glob matches nothing on Fedora, where it is already enabled.
+    run microdnf install -y --enablerepo='*appstream*' "$@"
+  elif command -v yum >/dev/null 2>&1; then
+    run yum install -y -q "$@"
+  elif command -v apk >/dev/null 2>&1; then
+    run apk add --no-cache --wait 300 "$@"
+  elif command -v zypper >/dev/null 2>&1; then
+    run zypper --non-interactive install --no-recommends "$@"
+  else
+    log "No supported package manager"
+    no_package_manager=yes
+    return 1
+  fi
+}
+
+find_missing() {
+  missing=
+  [ -n "$(find_sshd)" ] || missing="$missing openssh-server"
+}
+
+# sshd_config takes every variable on one SetEnv line; SSH sessions get the
+# container's environment as `kubectl exec` sees it.
+session_environment() {
+  env | while IFS= read -r line; do
+    name=${line%%=*}
+    value=${line#*=}
+
+    case $name in
+      ''|[0-9]*|*[!A-Za-z0-9_]*|HOME|PWD|OLDPWD|SHLVL|_|HOSTNAME|TERM|USER|LOGNAME|SHELL|MAIL) continue ;;
+    esac
+
+    case $value in
+      *\"*|*\\*) continue ;;
+    esac
+
+    printf ' "%s=%s"' "$name" "$value"
+  done
+}
+
+# The instance command may be using the package manager at the same time and
+# hold its lock, so a failed install is retried; it may also install sshd itself.
+attempt=0
+find_missing
+
+while [ -n "$missing" ] && [ "$attempt" -lt 10 ]; do
+  attempt=$((attempt + 1))
+  log "Installing$missing (attempt $attempt)"
+  started=$(date +%s)
+
+  # shellcheck disable=SC2086
+  if install_packages $missing; then
+    log "Installed$missing in $(($(date +%s) - started)) s"
+  elif [ -n "${no_package_manager:-}" ]; then
+    break
+  else
+    log "Could not install$missing; retrying in $((attempt * 15)) s"
+    sleep $((attempt * 15))
+  fi
+
+  find_missing
+done
+
+if [ -z "$(find_sshd)" ]; then
+  log "No sshd; SSH is unavailable until the image installs one"
+
+  until [ -n "$(find_sshd)" ]; do
+    sleep 60
+  done
+fi
+
+sshd=$(find_sshd)
+
+# Privilege separation directories of Debian- and Red Hat-style builds.
+mkdir -p /run/sshd /var/empty
+chmod 0755 /run/sshd /var/empty
+
+use_pam=
+grep -q libpam "$sshd" && [ -f /etc/pam.d/sshd ] && use_pam=yes
+
+# Without PAM, sshd refuses a locked account even with a valid key. "*" allows
+# no password either, but is not locked.
+if [ -z "$use_pam" ] && grep -q '^root:!' /etc/shadow 2>/dev/null; then
+  sed -i 's/^root:[^:]*:/root:*:/' /etc/shadow
+  log "Root was locked; set its password field to * so key logins work"
+fi
+
+# Some images, openSUSE's among them, have no nobody user.
+keys_user=nobody
+id nobody >/dev/null 2>&1 || keys_user=root
+
+if [ ! -f "$state/ssh_host_ed25519_key" ]; then
+  ssh-keygen -q -t ed25519 -N '' -f "$state/ssh_host_ed25519_key"
+fi
+
+{
+  echo "Port $port"
+  echo "HostKey $state/ssh_host_ed25519_key"
+  echo "PidFile $state/sshd.pid"
+  echo "PermitRootLogin prohibit-password"
+  echo "PasswordAuthentication no"
+  echo "KbdInteractiveAuthentication no"
+  echo "AuthorizedKeysFile none"
+  echo "AuthorizedKeysCommand $(command -v cat) ${FEATHERLESS_AUTHORIZED_KEYS_PATH:-/run/featherless/ssh/authorized_keys}"
+  echo "AuthorizedKeysCommandUser $keys_user"
+  echo "Subsystem sftp internal-sftp"
+  [ -n "$use_pam" ] && echo "UsePAM yes"
+  echo "SetEnv$(session_environment) \"FEATHERLESS_CONTAINER_PATH=$PATH\""
+} >"$state/sshd_config"
+
+# Every connection comes from the SSH gateway, so OpenSSH 9.8+ penalties for one
+# user's failed logins would lock out everyone. Older sshd rejects the option.
+echo "PerSourcePenalties no" >>"$state/sshd_config"
+"$sshd" -t -f "$state/sshd_config" 2>/dev/null || sed -i '/^PerSourcePenalties /d' "$state/sshd_config"
+
+log "Starting $sshd on port $port"
+
+while :; do
+  "$sshd" -D -e -f "$state/sshd_config"
+  log "sshd exited with status $?; restarting in 5 s"
+  sleep 5
+done
