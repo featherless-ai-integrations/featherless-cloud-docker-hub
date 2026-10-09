@@ -31,7 +31,9 @@ install_packages() {
   elif command -v dnf >/dev/null 2>&1; then
     run dnf install -y -q --setopt=install_weak_deps=False "$@"
   elif command -v microdnf >/dev/null 2>&1; then
-    run microdnf install -y "$@"
+    # RHEL's minimal images ship AppStream disabled, where tmux and openssh-server live;
+    # the glob matches nothing on Fedora, where it is already enabled.
+    run microdnf install -y --enablerepo='*appstream*' "$@"
   elif command -v yum >/dev/null 2>&1; then
     run yum install -y -q "$@"
   elif command -v apk >/dev/null 2>&1; then
