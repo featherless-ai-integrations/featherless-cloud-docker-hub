@@ -5,7 +5,7 @@ image: featherlesscloud/rocm-axolotl
 icon: icon.svg
 startupCommand: ""
 environment: []
-bootstrapVersion: "2"
+bootstrapVersion: "1"
 versions:
   - version: "0.18.0"
     tag: axolotl0.18.0-rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0

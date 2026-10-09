@@ -35,7 +35,7 @@ and the icon.
 | `description` | string | No | Shared by every entry of this file. |
 | `startupCommand` | string | No | Default `""`, which runs the image entrypoint `featherless-init run`. |
 | `environment` | list of `{name, value}` | No | Default `[]`. |
-| `bootstrapVersion` | string | No | Default `"1"`: the image serves SSH itself. `"2"`: Featherless Cloud mounts [featherless-init](../featherless-init/README.md) in front of the image's entrypoint and serves SSH, tmux and the login banner; every template here uses it. |
+| `bootstrapVersion` | string | No | Default `"1"`: the image serves SSH itself. `"2"`: Featherless Cloud mounts [featherless-init](../featherless-init/README.md) in front of the image's entrypoint and serves SSH, tmux and the login banner; every template here uses it except Axolotl, whose image has yet to be rebuilt. |
 | `versions` | list | Yes | At least one entry, one per published image tag. |
 
 ## Version entry fields
