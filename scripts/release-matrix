@@ -5,6 +5,16 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../versions.env
 source "$repo_root/versions.env"
 
+# Axolotl builds only from its published FlashAttention wheel (README, "FlashAttention release
+# artifact"); until that release asset exists the image is left out instead of failing.
+wheel_url="$(sed -n 's/^flash-attn @ \([^ ]*\).*/\1/p' "$repo_root/docker-image/rocm-axolotl/flash-attn.lock")"
+axolotl_wheel=false
+if curl -fsIL --max-time 30 -o /dev/null "$wheel_url"; then
+  axolotl_wheel=true
+else
+  echo "::notice::rocm-axolotl is not built: its FlashAttention wheel is not published at $wheel_url" >&2
+fi
+
 jq -nc \
   --arg pt "$PYTORCH_IMAGE_TAG" \
   --arg pts "$PYTORCH_BASE" \
@@ -16,10 +26,11 @@ jq -nc \
   --arg axolotls "$AXOLOTL_BASE" \
   --arg init "$FEATHERLESS_INIT_IMAGE_TAG" \
   --arg inits "$FEATHERLESS_INIT_BASE" \
+  --argjson axolotl_wheel "$axolotl_wheel" \
   '{include: [
     {target:"pytorch", repository:"rocm-pytorch", version:$pt, source:$pts},
     {target:"sgl-dev", repository:"rocm-sgl", version:$sgl, source:$sgls},
     {target:"vllm", repository:"rocm-vllm", version:$vllm, source:$vllms},
-    {target:"axolotl", repository:"rocm-axolotl", version:$axolotl, source:$axolotls},
+    (if $axolotl_wheel then {target:"axolotl", repository:"rocm-axolotl", version:$axolotl, source:$axolotls} else empty end),
     {target:"featherless-init", repository:"featherless-init", version:$init, source:$inits}
   ]}'

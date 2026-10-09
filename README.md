@@ -129,8 +129,9 @@ Torch/vision/audio/Triton binaries and NVIDIA runtime dependencies.
 
 `flash-attn.lock` pins an exact wheel URL and SHA-256. It targets the pinned
 Ubuntu 24.04 x86-64 base, Python 3.12 and `torch==2.12.0+rocm7.14.0`; a base-stack
-change requires a new compatible, GPU-validated wheel and lock. Missing release
-assets or a hash mismatch fail the build rather than starting a multi-hour compilation.
+change requires a new compatible, GPU-validated wheel and lock. Until the release
+asset is published, `scripts/release-matrix` leaves Axolotl out of the image build;
+a hash mismatch fails it rather than starting a multi-hour compilation.
 
 The initial wheel is repacked from the already-validated exported image. All 86
 package/native files were checked against the installed wheel's original
