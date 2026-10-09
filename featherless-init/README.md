@@ -77,15 +77,8 @@ docker build --platform linux/amd64 -f docker-image/featherless-init/Dockerfile 
 mount in each base image, with a client container standing in for the SSH gateway. It needs
 Docker 28 or later and network access for package installs.
 
-`test/k8s-lab.sh <image reference> [image...]` runs the same checks on a Kubernetes cluster, with the
-image mounted as an image volume under the instance Pod's security settings, in a namespace
-`featherless-init-lab` that it deletes afterwards. With no images it adds scenarios: an image that
-runs `apt-get` at startup, no command, `wait` in bash, and an s6-overlay image.
-`PULL_SECRET_FROM=<namespace>` copies that namespace's `docker-hub` pull secret for a private image.
-
 The `featherless-init` workflow lints the scripts and runs `test/lab.sh` on Ubuntu, Debian,
-Rocky and Alpine for every change to the image. Both labs exit non-zero when a check fails, and
-both check:
+Rocky and Alpine for every change to the image. It exits non-zero when a check fails, and checks:
 - the instance command is PID 1 and owns the container's output;
 - SSH login and environment;
 - the `default` tmux session and the opt-out;
