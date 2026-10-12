@@ -47,6 +47,8 @@ template_lab() {
   docker run -d --name "$host" --network fl-init-lab --platform "linux/$arch" \
     --mount "type=image,source=$bundle,target=/run/featherless/init" \
     -v "$work/keys:/run/featherless/ssh:ro" \
+    --mount type=tmpfs,destination=/workspace,tmpfs-size=1073741824 \
+    -e FEATHERLESS_STORAGE_JSON='[{"name":"Container disk","capacityGiB":20,"mountPath":"/"},{"name":"Network volume","capacityGiB":1,"mountPath":"/workspace"}]' \
     -e FEATHERLESS_AUTHORIZED_KEYS_PATH=/run/featherless/ssh/authorized_keys -e REQUIRE_MI325X=false \
     --entrypoint /run/featherless/init/featherless-init "$image" \
     -- /usr/bin/tini -- /usr/local/bin/featherless-init run >/dev/null
@@ -79,13 +81,23 @@ template_lab() {
     && check "the launcher says SSH is left to the init" ok || check "launcher log" "$(docker logs "$host" 2>&1 | tail -2 | tr '\n' ' ')"
 
   tty_session "$host" $'\002d' >/dev/null
-  local sessions server banner
+  local sessions server banner storage
   sessions=$(on "$host" 'tmux ls -F "#{session_name}"' 2>&1)
   [ "$sessions" = default ] && check "interactive login starts tmux session \"default\"" ok || check "auto tmux" "$sessions"
   server=$(on "$host" 'readlink /proc/$(tmux display-message -p -t default "#{pid}")/exe')
   [ "$server" = /run/featherless/init/bin/tmux ] && check "the bundled tmux runs the session, not the image's" ok || check "bundled tmux" "${server:-none}"
   banner=$(on "$host" 'tmux capture-pane -p -t default -S -100 | grep -c "GPU CLOUD"')
   [ "$banner" = 1 ] && check "the banner shows once; the image's own copy stays quiet" ok || check "banner count" "${banner:-none}"
+
+  # SSH sessions drop variables whose values hold quotes, so this reads the
+  # storage list the way an exec terminal does. The container disk sits on the
+  # Docker host's disk, which reports another size.
+  docker exec "$host" sh -c 'head -c 268435456 /dev/zero > /workspace/blob'
+  storage=$(docker exec -t -e NO_COLOR=1 "$host" bash -ic '. /etc/profile.d/10-featherless-banner.sh' 2>/dev/null \
+    | tr -d '\r' | grep -E '^(Container disk|Network volume) ' | tr -s ' ')
+  [ "$storage" = $'Container disk 20 GiB — /\nNetwork volume 1 GiB 25% /workspace' ] \
+    && check "the banner shows usage only where the filesystem reports the storage's own size" ok \
+    || check "banner storage" "$(echo "$storage" | tr '\n' ';')"
 
   [ "$(docker inspect -f '{{.State.Running}}' "$host")" = true ] && check "the container stays up with nothing but SSH to serve" ok \
     || check "container" "exited $(docker inspect -f '{{.State.ExitCode}}' "$host"): $(docker logs "$host" 2>&1 | tail -2 | tr '\n' ' ')"

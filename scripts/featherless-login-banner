@@ -80,12 +80,18 @@ storage_usage() {
   capacity_gib=$1
   mount_path=$2
   command -v timeout >/dev/null 2>&1 || { printf '—'; return; }
-  used_kib=$(timeout 1 du -sxk -- "$mount_path" 2>/dev/null | awk 'NR == 1 { print $1 }')
-  case "$used_kib" in
-    ''|*[!0-9]*) printf '—' ;;
-    *) awk -v used="$used_kib" -v capacity="$capacity_gib" \
-      'BEGIN { percent = int((used * 100) / (capacity * 1048576)); if (percent > 100) percent = 100; printf "%d%%", percent }' ;;
-  esac
+  # A filesystem that reports some other size, such as the node's disk under a
+  # container disk without its own quota, says nothing about this storage.
+  timeout 1 df -Pk -- "$mount_path" 2>/dev/null | awk -v capacity="$capacity_gib" '
+    NR == 2 && $2 > 0 {
+      expected = capacity * 1048576
+      if ($2 < expected * 0.9 || $2 > expected * 1.1) exit
+      percent = int($3 * 100 / $2)
+      if (percent > 100) percent = 100
+      printf "%d%%", percent
+      shown = 1
+    }
+    END { if (!shown) printf "—" }'
 }
 
 # PID 1's age from the boot time and its start tick. ps measures against
