@@ -65,12 +65,15 @@ sshd runs on port 22 with its own configuration:
   `*`, which still allows no password but lets key logins through.
 
 `profile.d/featherless.sh` runs in login shells, which sshd starts only for interactive logins. It
-restores the container's `PATH` (`/etc/profile` resets it on most distributions) and attaches the
-login to the tmux session `default`, creating it if needed. It runs before the image's other profile
-scripts, so what they print appears inside the session. It then shows the banner in every new shell
-of the session, or on a login that stays a plain shell; template images skip their own copy. A terminal the image has no terminfo entry for, such as Ghostty's `xterm-ghostty`,
-attaches as `xterm-256color`. `touch ~/.no_auto_tmux` opts out; without tmux, or if tmux cannot
-start, the login stays a plain shell.
+restores the container's `PATH` (`/etc/profile` resets it on most distributions). While the file
+`FEATHERLESS_SSH_TMUX_PATH` exists, it attaches the login to the tmux session `default`, creating it
+if needed. The platform keeps that file in the instance's SSH Secret while the instance's "Open SSH
+logins in tmux" setting is on (off by default), so a change applies to the next login without a
+restart. The hook runs before the image's other profile scripts, so what they print appears inside
+the session. It then shows the banner in every new shell of the session, or on a login that stays a
+plain shell; template images skip their own copy. A terminal the image has no terminfo entry for,
+such as Ghostty's `xterm-ghostty`, attaches as `xterm-256color`. With the setting off, without
+tmux, or if tmux cannot start, the login stays a plain shell.
 
 ## Build and release
 
@@ -95,7 +98,7 @@ Rocky, Fedora, UBI, openSUSE and Alpine for every change to the image or the tem
 and checks:
 - the instance command is PID 1 and owns the container's output;
 - SSH login and environment;
-- the `default` tmux session runs the bundled tmux, and the opt-out;
+- the `default` tmux session runs the bundled tmux, and a plain shell with the setting off;
 - the bundled tmux without a package manager and as a non-root user;
 - `PATH` in login shells;
 - scp;

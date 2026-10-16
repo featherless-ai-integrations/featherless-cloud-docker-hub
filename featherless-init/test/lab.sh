@@ -18,6 +18,8 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"; docker rm -f fl-init-client >/dev/null 2>&1' EXIT
 ssh-keygen -q -t ed25519 -N '' -C lab -f "$work/id_ed25519"
 mkdir "$work/keys" && cp "$work/id_ed25519.pub" "$work/keys/authorized_keys" && chmod 0755 "$work/keys" && chmod 0444 "$work/keys/authorized_keys"
+# The instance's "Open SSH logins in tmux" setting, on; the platform's Secret holds the same file.
+touch "$work/keys/tmux" && chmod 0444 "$work/keys/tmux"
 # A stand-in for the template images' login banner, with the same once-only guard.
 cat >"$work/banner.sh" <<'BANNER'
 [ "${FEATHERLESS_BANNER_SHOWN:-}" = 1 ] && return 0
@@ -49,7 +51,8 @@ template_lab() {
     -v "$work/keys:/run/featherless/ssh:ro" \
     --mount type=tmpfs,destination=/workspace,tmpfs-size=1073741824 \
     -e FEATHERLESS_STORAGE_JSON='[{"name":"Container disk","capacityGiB":20,"mountPath":"/"},{"name":"Network volume","capacityGiB":1,"mountPath":"/workspace"}]' \
-    -e FEATHERLESS_AUTHORIZED_KEYS_PATH=/run/featherless/ssh/authorized_keys -e REQUIRE_MI325X=false \
+    -e FEATHERLESS_AUTHORIZED_KEYS_PATH=/run/featherless/ssh/authorized_keys -e FEATHERLESS_SSH_TMUX_PATH=/run/featherless/ssh/tmux \
+    -e REQUIRE_MI325X=false \
     --entrypoint /run/featherless/init/featherless-init "$image" \
     -- /usr/bin/tini -- /usr/local/bin/featherless-init run >/dev/null
 
@@ -120,7 +123,8 @@ for image in "${images[@]}"; do
   docker run -d --name "$host" --network fl-init-lab --platform "linux/$arch" \
     --mount "type=image,source=$bundle,target=/run/featherless/init" \
     -v "$work/keys:/run/featherless/ssh:ro" -v "$work/banner.sh:/etc/profile.d/10-lab-banner.sh:ro" \
-    -e FEATHERLESS_AUTHORIZED_KEYS_PATH=/run/featherless/ssh/authorized_keys -e LAB_IMAGE_VAR=from-container \
+    -e FEATHERLESS_AUTHORIZED_KEYS_PATH=/run/featherless/ssh/authorized_keys -e FEATHERLESS_SSH_TMUX_PATH=/run/featherless/ssh/tmux \
+    -e LAB_IMAGE_VAR=from-container \
     --entrypoint /run/featherless/init/featherless-init "$image" \
     -- sh -c 'trap "echo got-term; exit 7" TERM; echo "instance-command pid=$$"; while :; do sleep 1; done' >/dev/null
 
@@ -172,10 +176,10 @@ for image in "${images[@]}"; do
     *) check "pane PATH" "$pane_path (container $container_path)" ;;
   esac
 
-  on "$host" 'touch ~/.no_auto_tmux'
+  rm -f "$work/keys/tmux"
   plain=$(tty_session "$host" $'echo "tmux=[$TMUX]"; exit\n' | grep -o 'tmux=\[[^]]*\]' | tail -1)
-  [ "$plain" = "tmux=[]" ] && check "~/.no_auto_tmux opts out" ok || check "opt-out" "${plain:-no shell output}"
-  on "$host" 'rm ~/.no_auto_tmux'
+  [ "$plain" = "tmux=[]" ] && check "with the tmux setting off, a login stays a plain shell" ok || check "setting off" "${plain:-no shell output}"
+  touch "$work/keys/tmux" && chmod 0444 "$work/keys/tmux"
 
   on "$host" 'tmux kill-server'
   tty_session "$host" $'\002d' xterm-ghostty >/dev/null
