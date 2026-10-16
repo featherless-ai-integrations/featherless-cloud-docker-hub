@@ -9,7 +9,7 @@ if [ -n "${FEATHERLESS_CONTAINER_PATH:-}" ]; then
 fi
 
 # The platform keeps FEATHERLESS_SSH_TMUX_PATH present while the instance's
-# "Open SSH logins in tmux" setting is on; it can change while the instance runs.
+# autoTmux is ssh-only; it can change while the instance runs.
 if [ -z "${TMUX:-}" ] && [ -n "${SSH_TTY:-}" ] && [ -n "${FEATHERLESS_SSH_TMUX_PATH:-}" ] && [ -e "$FEATHERLESS_SSH_TMUX_PATH" ] \
   && command -v tmux >/dev/null 2>&1; then
   # The login lands in the session "default", shared with the browser terminal.

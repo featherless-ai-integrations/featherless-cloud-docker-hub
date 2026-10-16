@@ -18,7 +18,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"; docker rm -f fl-init-client >/dev/null 2>&1' EXIT
 ssh-keygen -q -t ed25519 -N '' -C lab -f "$work/id_ed25519"
 mkdir "$work/keys" && cp "$work/id_ed25519.pub" "$work/keys/authorized_keys" && chmod 0755 "$work/keys" && chmod 0444 "$work/keys/authorized_keys"
-# The instance's "Open SSH logins in tmux" setting, on; the platform's Secret holds the same file.
+# The instance's autoTmux set to ssh-only; the platform's Secret holds the same file.
 touch "$work/keys/tmux" && chmod 0444 "$work/keys/tmux"
 # A stand-in for the template images' login banner, with the same once-only guard.
 cat >"$work/banner.sh" <<'BANNER'
