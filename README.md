@@ -261,7 +261,8 @@ GitHub Actions image build; the other native packages were not rebuilt in this r
 `featherless-init` (`featherlesscloud/featherless-init`) is mounted read-only into
 every custom-image and template instance and runs in front of the image's own
 command: it installs sshd when the image lacks it, serves SSH on port 22 with a
-bundled tmux, and puts interactive logins in the tmux session `default`. It is
+bundled tmux, and puts interactive logins in the tmux session `default` when the
+instance's setting asks for it. It is
 built `FROM scratch` around static `tini` and is separate from the template
 images' `scripts/featherless-init` entrypoint, which then leaves SSH to it and
 keeps the MI325X check, JupyterLab and the startup command. See

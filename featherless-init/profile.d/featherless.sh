@@ -8,8 +8,11 @@ if [ -n "${FEATHERLESS_CONTAINER_PATH:-}" ]; then
   export PATH
 fi
 
-if [ -z "${TMUX:-}" ] && [ -n "${SSH_TTY:-}" ] && [ ! -e "$HOME/.no_auto_tmux" ] && command -v tmux >/dev/null 2>&1; then
-  # Every SSH login lands in the shared session "default". Opt out with: touch ~/.no_auto_tmux
+# The platform keeps FEATHERLESS_SSH_TMUX_PATH present while the instance's
+# autoTmux is ssh-only; it can change while the instance runs.
+if [ -z "${TMUX:-}" ] && [ -n "${SSH_TTY:-}" ] && [ -n "${FEATHERLESS_SSH_TMUX_PATH:-}" ] && [ -e "$FEATHERLESS_SSH_TMUX_PATH" ] \
+  && command -v tmux >/dev/null 2>&1; then
+  # The login lands in the session "default", shared with the browser terminal.
   # tmux refuses a terminal the image has no terminfo entry for (xterm-ghostty, xterm-kitty).
   featherless_term=xterm-256color
   for featherless_dir in "${TERMINFO:-}" "$HOME/.terminfo" /etc/terminfo /lib/terminfo /usr/share/terminfo /usr/lib/terminfo /run/featherless/init/terminfo; do
