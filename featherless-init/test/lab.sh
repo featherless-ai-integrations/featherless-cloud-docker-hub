@@ -94,12 +94,13 @@ template_lab() {
 
   # SSH sessions drop variables whose values hold quotes, so this reads the
   # storage list the way an exec terminal does. The container disk sits on the
-  # Docker host's disk, which reports another size.
+  # Docker host's disk, so its percentage is that disk's.
   docker exec "$host" sh -c 'head -c 268435456 /dev/zero > /workspace/blob'
   storage=$(docker exec -t -e NO_COLOR=1 "$host" bash -ic '. /etc/profile.d/10-featherless-banner.sh' 2>/dev/null \
     | tr -d '\r' | grep -E '^(Container disk|Network volume) ' | tr -s ' ')
-  [ "$storage" = $'Container disk 20 GiB — /\nNetwork volume 1 GiB 25% /workspace' ] \
-    && check "the banner shows usage only where the filesystem reports the storage's own size" ok \
+  printf '%s\n' "$storage" | grep -Eq '^Container disk 20 GiB [0-9]+% /$' \
+    && printf '%s\n' "$storage" | grep -qx 'Network volume 1 GiB 25% /workspace' \
+    && check "the banner shows each storage's size with the usage df reports" ok \
     || check "banner storage" "$(echo "$storage" | tr '\n' ';')"
 
   [ "$(docker inspect -f '{{.State.Running}}' "$host")" = true ] && check "the container stays up with nothing but SSH to serve" ok \
