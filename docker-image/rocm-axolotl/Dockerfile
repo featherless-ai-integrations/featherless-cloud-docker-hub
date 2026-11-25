@@ -53,11 +53,13 @@ RUN chmod 0755 /usr/local/bin/featherless-init \
 
 WORKDIR /workspace
 EXPOSE 22 8888
-# The launcher configures sshd and must start as root. Services drop to
-# CLOUD_USER where appropriate after setup.
+# SSH is set up as root, by Featherless Cloud's instance init or by
+# scripts/featherless-init when that is run as the command.
 USER root
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/featherless-init"]
-CMD ["run"]
+# An instance's start command replaces CMD. tini passes the stop signal on,
+# which a bare PID 1 would ignore.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["sleep", "infinity"]
 
 # Axolotl-specific extension appended to the shared ROCm template by the renderer.
 ARG AXOLOTL_COMMIT=2f5cb9da62a0fe763a1ddeb7798fc9acb2f4a417
@@ -101,5 +103,8 @@ COPY docker-image/rocm-axolotl/recipes/ /opt/axolotl-recipes/
 COPY scripts/axolotl-workspace scripts/axolotl-doctor scripts/verify-axolotl /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/axolotl-workspace /usr/local/bin/axolotl-doctor /usr/local/bin/verify-axolotl
 
-# Keep tini/featherless-init and CMD run from the shared layer. No training,
-# model downloads, credential prompts, or compilation is started at container boot.
+# Bootstrap 1: Featherless Cloud mounts no instance init for this image, so its
+# own launcher serves SSH. No training, model downloads, credential prompts, or
+# compilation is started at container boot.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/featherless-init"]
+CMD ["run"]

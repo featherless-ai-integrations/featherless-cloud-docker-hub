@@ -39,7 +39,7 @@ failed=0
 check() { if [ "$2" = ok ]; then printf '  ok    %s\n' "$1"; else printf '  FAIL  %s: %s\n' "$1" "$2"; failed=1; fi; }
 
 # A template image behind the init, as a bootstrap 2 template instance runs: its ENTRYPOINT and
-# CMD after `featherless-init --`. Built on Ubuntu, since the ROCm bases are amd64 only and huge.
+# CMD, `tini -- sleep infinity`, after `featherless-init --`. Built on Ubuntu, since the ROCm bases are amd64 only and huge.
 template_lab() {
   local host=fl-init-template image=featherless-template:lab-$arch
   echo "== template image on ubuntu:24.04 ($arch)"
@@ -54,7 +54,7 @@ template_lab() {
     -e FEATHERLESS_AUTHORIZED_KEYS_PATH=/run/featherless/ssh/authorized_keys -e FEATHERLESS_SSH_TMUX_PATH=/run/featherless/ssh/tmux \
     -e REQUIRE_MI325X=false \
     --entrypoint /run/featherless/init/featherless-init "$image" \
-    -- /usr/bin/tini -- /usr/local/bin/featherless-init run >/dev/null
+    -- /usr/bin/tini -- sleep infinity >/dev/null
 
   local started
   started=$(date +%s)
@@ -78,10 +78,8 @@ template_lab() {
     "sshd: /usr/sbin/sshd -D -e -f /run/featherless/state/sshd_config [listener]"*) true ;;
     *) false ;;
   esac \
-    && check "only the init's sshd serves port 22; the template's launcher starts none" ok \
+    && check "only the init's sshd serves port 22; the template image starts none" ok \
     || check "sshd processes" "$(echo "$listeners" | tr '\n' ';')"
-  docker logs "$host" 2>&1 | grep -q "SSH is served by the platform's featherless-init" \
-    && check "the launcher says SSH is left to the init" ok || check "launcher log" "$(docker logs "$host" 2>&1 | tail -2 | tr '\n' ' ')"
 
   tty_session "$host" $'\002d' >/dev/null
   local sessions server banner storage
@@ -106,10 +104,13 @@ template_lab() {
   [ "$(docker inspect -f '{{.State.Running}}' "$host")" = true ] && check "the container stays up with nothing but SSH to serve" ok \
     || check "container" "exited $(docker inspect -f '{{.State.ExitCode}}' "$host"): $(docker logs "$host" 2>&1 | tail -2 | tr '\n' ' ')"
 
-  docker stop -t 10 "$host" >/dev/null
-  local code
+  # tini passes SIGTERM to the sleep; as PID 1 the sleep would ignore it until the kill.
+  local stopping code
+  stopping=$(date +%s)
+  docker stop -t 30 "$host" >/dev/null
   code=$(docker inspect -f '{{.State.ExitCode}}' "$host")
-  [ "$code" = 0 ] && check "SIGTERM stops the launcher cleanly" ok || check "SIGTERM" "exit code $code"
+  [ "$code" = 143 ] && [ $(($(date +%s) - stopping)) -lt 10 ] && check "SIGTERM stops the container at once" ok \
+    || check "SIGTERM" "exit code $code after $(($(date +%s) - stopping)) s"
   docker rm -f "$host" >/dev/null
 }
 

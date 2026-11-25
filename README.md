@@ -111,9 +111,9 @@ checks the real entrypoint and Axolotl metadata before publishing
 
 ## Axolotl training workspace
 
-The Axolotl image preserves the shared MI325X guard, SSH/Jupyter lifecycle, and
-`featherless-init` entrypoint. Boot does not download models, start training, or
-compile extensions. Its independent base digest and Axolotl release commit are
+The Axolotl image keeps `scripts/featherless-init` as its entrypoint, with the
+MI325X guard and SSH/Jupyter lifecycle. Boot does not download models, start
+training, or compile extensions. Its independent base digest and Axolotl release commit are
 pinned in `versions.env`; Python dependencies, the native FlashAttention wheel,
 and DeepSpeed source artifact are hash-locked under `docker-image/rocm-axolotl/`.
 
@@ -263,15 +263,16 @@ every custom-image and template instance and runs in front of the image's own
 command: it installs sshd when the image lacks it, serves SSH on port 22 with a
 bundled tmux, and puts interactive logins in the tmux session `default` when the
 instance's setting asks for it. It is
-built `FROM scratch` around static `tini` and is separate from the template
-images' `scripts/featherless-init` entrypoint, which then leaves SSH to it and
-keeps the MI325X check, JupyterLab and the startup command. See
+built `FROM scratch` around static `tini` and is separate from
+`scripts/featherless-init`, the launcher the template images carry for use
+outside Featherless Cloud. See
 [featherless-init/README.md](featherless-init/README.md).
 
 ## Run on an MI325X host
 
 ROCm containers need `/dev/kfd`, `/dev/dri`, the video group, and generous shared
-memory. The included Compose configuration supplies these:
+memory. The included Compose configuration supplies these and runs the image's
+launcher, `featherless-init run`, which serves SSH:
 
 ```bash
 export IMAGE=featherlesscloud/rocm-pytorch:rocm7.14-ubuntu24.04-py3.12-pytorch2.12.0
@@ -316,13 +317,23 @@ and PCI/NUMA utilities.
 Interactive login shells show a compact Featherless resource summary.
 Non-interactive SSH commands do not emit the banner.
 
-Commands supplied after the image name run alongside platform services. The
-stable wrapper interface is `featherless-init run -- PROGRAM [ARG...]`. The
-image entrypoint must remain intact so `featherless-init` can configure SSH,
-start enabled services, supervise the custom command, and stop the remaining
-processes when any supervised process exits. Future custom images must either
-provide this compatibility entrypoint or use a platform-injected equivalent;
-preserving an arbitrary image entrypoint cannot guarantee platform services.
+Each image runs one command under `tini`:
+
+| Image | Command |
+| --- | --- |
+| `rocm-pytorch` | `sleep infinity`, which keeps the container up |
+| `rocm-vllm` | `vllm serve`, serving `DEFAULT_MODEL` from `versions.env` on port 8000 |
+| `rocm-sgl` | `sglang.launch_server`, serving the same model on port 8000 |
+| `rocm-axolotl` | the launcher, `featherless-init run` |
+
+On Featherless Cloud the mounted instance init serves SSH beside that command,
+and an instance's start command replaces it.
+
+Outside Featherless Cloud, run the launcher as the command to get SSH and
+JupyterLab: `featherless-init run`, or `featherless-init run -- PROGRAM [ARG...]`
+to supervise a program beside them. It configures SSH, starts the enabled
+services, and stops the remaining processes when any supervised process exits.
+The variables above configure it.
 
 If neither Jupyter credential is set, authentication is disabled and a warning is
 logged. Do that only behind a trusted network. Prefer `SSH_PUBLIC_KEY` over
@@ -344,10 +355,10 @@ password login remains unavailable for root. Jupyter receives `--allow-root` in
 that case. The file-based multi-user mode still takes precedence when
 `SSH_USERS_FILE` is defined.
 
-SSH is enabled and Jupyter is disabled by default. Run one service by passing
-`run ssh` or `run jupyter`; `run all` explicitly starts both. The `ENABLE_SSH`
-and `ENABLE_JUPYTER` variables control services when using the default `run`
-command. Passing any other command replaces the launcher:
+With `featherless-init run`, SSH is enabled and Jupyter is disabled by default.
+`run ssh` or `run jupyter` starts one service; `run all` starts both. The
+`ENABLE_SSH` and `ENABLE_JUPYTER` variables control services for a plain `run`.
+Any other command runs in place of the image's own:
 
 ```bash
 docker run --rm -it --device=/dev/kfd --device=/dev/dri \
@@ -393,7 +404,7 @@ tests; it is not a supported production deployment mode.
 
 ## Install on an existing Debian/Ubuntu system
 
-The same entrypoint is also the standard standalone installer and service
+The same script is also the standard standalone installer and service
 supervisor. `start` installs any missing component before launching the selected
 service set:
 

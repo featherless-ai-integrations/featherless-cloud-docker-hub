@@ -33,7 +33,7 @@ and the icon.
 | `image` | string | Yes | Docker Hub repository only (e.g. `featherlesscloud/rocm-pytorch`). No tag, no digest. The file's identity; imports match existing templates by this value. |
 | `icon` | string | No | Sibling SVG or PNG asset. Defaults to `icon.svg`. Icons retain their aspect ratio. |
 | `description` | string | No | Shared by every entry of this file. |
-| `startupCommand` | string | No | Default `""`, which runs the image entrypoint `featherless-init run`. |
+| `startupCommand` | string | No | Default `""`, which runs the image's own command: `sleep infinity` for PyTorch, a model server for vLLM and SGLang, the `featherless-init run` launcher for Axolotl. |
 | `environment` | list of `{name, value}` | No | Default `[]`. |
 | `bootstrapVersion` | string | No | Default `"1"`: the image serves SSH itself. `"2"`: Featherless Cloud mounts [featherless-init](../featherless-init/README.md) in front of the image's entrypoint and serves SSH, tmux and the login banner; every template here uses it except Axolotl, whose image has yet to be rebuilt. |
 | `versions` | list | Yes | At least one entry, one per published image tag. |
