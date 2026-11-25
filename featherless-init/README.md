@@ -8,9 +8,10 @@ container's output. SSH, tmux and the login banner then behave the same in every
 
 This is not `scripts/featherless-init`, the launcher the template images carry for use outside
 Featherless Cloud. A template whose file sets `bootstrapVersion: "2"` runs behind this init like
-any other image: its own command under `tini` (`sleep infinity` for PyTorch, a model server for
-vLLM and SGLang), or the instance's start command in its place. When the launcher is run as that
-command, it sees this init at `/run/featherless/init/featherless-init` and leaves SSH to it.
+any other image: its own command under `tini` (`sleep infinity` for PyTorch and Axolotl, a model
+server for vLLM and SGLang), or the instance's start command in its place. When the launcher is
+run as that command, it sees this init at `/run/featherless/init/featherless-init` and leaves SSH
+to it.
 
 ## Contract
 

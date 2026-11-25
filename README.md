@@ -105,15 +105,14 @@ Only DeepSpeed's CPUAdam/FusedAdam extensions still compile, with `MAX_JOBS=2`
 to conserve RAM. CPUAdam uses `-march=native`, so its wheel is not reused across
 different builders. The AMD base alone occupies about 28 GB unpacked; runner
 image changes and dependency growth can still require a larger runner. The job
-checks the real entrypoint and Axolotl metadata before publishing
+checks the Axolotl metadata through the image's entrypoint before publishing
 `featherlesscloud/rocm-axolotl:<complete-stack-version>` and
 `featherlesscloud/rocm-axolotl:sha-<commit>`. CPU CI does not certify GPU kernels.
 
 ## Axolotl training workspace
 
-The Axolotl image keeps `scripts/featherless-init` as its entrypoint, with the
-MI325X guard and SSH/Jupyter lifecycle. Boot does not download models, start
-training, or compile extensions. Its independent base digest and Axolotl release commit are
+Like the other images, Axolotl runs `sleep infinity` until given a command.
+Boot does not download models, start training, or compile extensions. Its independent base digest and Axolotl release commit are
 pinned in `versions.env`; Python dependencies, the native FlashAttention wheel,
 and DeepSpeed source artifact are hash-locked under `docker-image/rocm-axolotl/`.
 
@@ -324,7 +323,7 @@ Each image runs one command under `tini`:
 | `rocm-pytorch` | `sleep infinity`, which keeps the container up |
 | `rocm-vllm` | `vllm serve`, serving `DEFAULT_MODEL` from `versions.env` on port 8000 |
 | `rocm-sgl` | `sglang.launch_server`, serving the same model on port 8000 |
-| `rocm-axolotl` | the launcher, `featherless-init run` |
+| `rocm-axolotl` | `sleep infinity` |
 
 On Featherless Cloud the mounted instance init serves SSH beside that command,
 and an instance's start command replaces it.

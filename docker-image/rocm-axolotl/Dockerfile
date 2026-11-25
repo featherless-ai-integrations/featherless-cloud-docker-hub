@@ -102,9 +102,3 @@ RUN printf '%s\n' \
 COPY docker-image/rocm-axolotl/recipes/ /opt/axolotl-recipes/
 COPY scripts/axolotl-workspace scripts/axolotl-doctor scripts/verify-axolotl /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/axolotl-workspace /usr/local/bin/axolotl-doctor /usr/local/bin/verify-axolotl
-
-# Bootstrap 1: Featherless Cloud mounts no instance init for this image, so its
-# own launcher serves SSH. No training, model downloads, credential prompts, or
-# compilation is started at container boot.
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/featherless-init"]
-CMD ["run"]
