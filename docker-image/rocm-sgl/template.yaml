@@ -1,6 +1,6 @@
 schemaVersion: 1
 name: SGLang (ROCm)
-description: AMD ROCm SGLang on MI325X with SSH and JupyterLab.
+description: AMD ROCm SGLang on MI325X. Serves Qwen3-4B on port 8000 unless you set a start command.
 image: featherlesscloud/rocm-sgl
 icon: icon.png
 startupCommand: ""

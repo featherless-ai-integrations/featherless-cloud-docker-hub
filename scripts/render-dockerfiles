@@ -9,12 +9,13 @@ check=false
 source "$repo_root/versions.env"
 
 render() {
-  local output="$1" base="$2" description="$3" temporary
-  local -a source_templates=("${4:-$template}")
-  [[ -z "${5:-}" ]] || source_templates+=("$5")
+  local output="$1" base="$2" description="$3" command="$4" temporary
+  local -a source_templates=("${5:-$template}")
+  [[ -z "${6:-}" ]] || source_templates+=("$6")
   temporary="$(mktemp)"
   sed -e "s|@@BASE_IMAGE@@|${base}|g" \
       -e "s|@@DESCRIPTION@@|${description}|g" \
+      -e "s|@@COMMAND@@|${command}|g" \
       -e "s|@@AXOLOTL_COMMIT@@|${AXOLOTL_COMMIT}|g" \
       -e "s|@@AXOLOTL_VERSION@@|${AXOLOTL_VERSION}|g" \
       -e "s|@@TMUX_VERSION@@|${FEATHERLESS_INIT_TMUX_VERSION}|g" \
@@ -35,25 +36,34 @@ render() {
   fi
 }
 
+# Each image's CMD, which an instance's start command replaces.
+idle='["sleep", "infinity"]'
+
 render Dockerfile \
   "$PYTORCH_BASE" \
-  'Featherless AI ROCm development image for AMD Instinct MI325X'
+  'Featherless AI ROCm development image for AMD Instinct MI325X' \
+  "$idle"
 render docker-image/rocm-pytorch/Dockerfile \
   "$PYTORCH_BASE" \
-  'Featherless AI ROCm PyTorch image for AMD Instinct MI325X'
+  'Featherless AI ROCm PyTorch image for AMD Instinct MI325X' \
+  "$idle"
 render docker-image/rocm-sgl/Dockerfile \
   "$SGL_BASE" \
-  'Featherless AI ROCm SGLang image for AMD Instinct MI325X'
+  'Featherless AI ROCm SGLang image for AMD Instinct MI325X' \
+  "[\"python3\", \"-m\", \"sglang.launch_server\", \"--model-path\", \"$DEFAULT_MODEL\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]"
 render docker-image/rocm-vllm/Dockerfile \
   "$VLLM_BASE" \
-  'Featherless AI ROCm vLLM image for AMD Instinct MI325X'
+  'Featherless AI ROCm vLLM image for AMD Instinct MI325X' \
+  "[\"vllm\", \"serve\", \"$DEFAULT_MODEL\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]"
 render docker-image/rocm-axolotl/Dockerfile \
   "$AXOLOTL_BASE" \
   'Featherless Cloud Axolotl ROCm training image for AMD Instinct MI325X' \
+  "$idle" \
   "$template" \
   "$repo_root/templates/axolotl.Dockerfile"
 
 render docker-image/featherless-init/Dockerfile \
   "$FEATHERLESS_INIT_BASE" \
   "Featherless Cloud instance init, mounted into instance containers" \
+  '' \
   "$repo_root/templates/featherless-init.Dockerfile"

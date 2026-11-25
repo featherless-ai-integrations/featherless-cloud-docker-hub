@@ -6,10 +6,12 @@ front of the instance's own command: it starts the SSH side in the background, t
 command, which keeps PID 1, its signals and its exit code. Nothing it starts writes to the
 container's output. SSH, tmux and the login banner then behave the same in every instance.
 
-This is not the template images' entrypoint (`scripts/featherless-init`), which still runs after
-it: their template files set `bootstrapVersion: "2"`, and the launcher sees this init at
-`/run/featherless/init/featherless-init`, leaves SSH to it and keeps the MI325X check, JupyterLab
-and the startup command.
+This is not `scripts/featherless-init`, the launcher the template images carry for use outside
+Featherless Cloud. A template whose file sets `bootstrapVersion: "2"` runs behind this init like
+any other image: its own command under `tini` (`sleep infinity` for PyTorch and Axolotl, a model
+server for vLLM and SGLang), or the instance's start command in its place. When the launcher is
+run as that command, it sees this init at `/run/featherless/init/featherless-init` and leaves SSH
+to it.
 
 ## Contract
 
@@ -105,5 +107,6 @@ and checks:
 - sshd restarts;
 - zombie reaping;
 - SIGTERM;
-- in a template image, that only this init's sshd runs, the launcher keeps the container up, and
+- in a template image, that only this init's sshd runs, the image's sleep keeps the container up
+  and stops at once on SIGTERM, and
   the banner shows once.

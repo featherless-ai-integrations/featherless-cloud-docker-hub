@@ -53,8 +53,10 @@ RUN chmod 0755 /usr/local/bin/featherless-init \
 
 WORKDIR /workspace
 EXPOSE 22 8888
-# The launcher configures sshd and must start as root. Services drop to
-# CLOUD_USER where appropriate after setup.
+# SSH is set up as root, by Featherless Cloud's instance init or by
+# scripts/featherless-init when that is run as the command.
 USER root
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/featherless-init"]
-CMD ["run"]
+# An instance's start command replaces CMD. tini passes the stop signal on,
+# which a bare PID 1 would ignore.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["vllm", "serve", "Qwen/Qwen3-4B", "--host", "0.0.0.0", "--port", "8000"]

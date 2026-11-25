@@ -40,6 +40,3 @@ RUN printf '%s\n' \
 COPY docker-image/rocm-axolotl/recipes/ /opt/axolotl-recipes/
 COPY scripts/axolotl-workspace scripts/axolotl-doctor scripts/verify-axolotl /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/axolotl-workspace /usr/local/bin/axolotl-doctor /usr/local/bin/verify-axolotl
-
-# Keep tini/featherless-init and CMD run from the shared layer. No training,
-# model downloads, credential prompts, or compilation is started at container boot.
