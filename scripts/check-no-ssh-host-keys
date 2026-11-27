@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Fails when any layer of a local image contains SSH host keys.
+
+Every container started from an image shares the keys baked into it, and
+deleting them in a later layer still ships them in the earlier one, so this
+reads every layer, not the final filesystem. It streams `docker save` and keeps
+nothing on disk, so it fits beside a large image on a CI runner.
+
+Usage: scripts/check-no-ssh-host-keys IMAGE
+"""
+import re
+import subprocess
+import sys
+import tarfile
+
+HOST_KEY = re.compile(r'(^|/)etc/ssh/ssh_host_[^/]*key(\.pub)?$')
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print(__doc__.strip().splitlines()[-1], file=sys.stderr)
+        return 2
+
+    image = sys.argv[1]
+    save = subprocess.Popen(['docker', 'save', image], stdout=subprocess.PIPE)
+    found = []
+    layers = 0
+
+    with tarfile.open(fileobj=save.stdout, mode='r|') as archive:
+        for member in archive:
+            if not member.isfile():
+                continue
+
+            blob = archive.extractfile(member)
+
+            try:
+                with tarfile.open(fileobj=blob, mode='r|*') as layer:
+                    layers += 1
+
+                    for entry in layer:
+                        if HOST_KEY.search(entry.name) and entry.isfile():
+                            found.append(f'{member.name}: /{entry.name.lstrip("./")}')
+            except tarfile.ReadError:
+                # Image configs and manifests are JSON, not layers.
+                continue
+
+    if save.wait() != 0:
+        print(f'docker save {image} failed', file=sys.stderr)
+        return 2
+
+    if found:
+        print(f'{image} ships SSH host keys:', file=sys.stderr)
+        print('\n'.join(f'  {line}' for line in found), file=sys.stderr)
+        return 1
+
+    print(f'{image}: no SSH host keys in {layers} layers')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -34,8 +34,7 @@ RUN printf '%s\n' \
       'export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-/workspace/.cache/torchinductor}"' \
       'export AXOLOTL_DO_NOT_TRACK="${AXOLOTL_DO_NOT_TRACK:-1}"' \
       > /etc/profile.d/20-featherless-axolotl.sh \
-    && chmod 0644 /etc/profile.d/20-featherless-axolotl.sh \
-    && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+    && chmod 0644 /etc/profile.d/20-featherless-axolotl.sh
 
 COPY docker-image/rocm-axolotl/recipes/ /opt/axolotl-recipes/
 COPY scripts/axolotl-workspace scripts/axolotl-doctor scripts/verify-axolotl /usr/local/bin/

@@ -123,6 +123,11 @@ jobs:
             --tag "$SHA_IMAGE" \
             .
 
+      - name: Check no layer ships SSH host keys
+        env:
+          BUILT_IMAGE: ${{ env.OUTPUT_NAMESPACE }}/${{ matrix.repository }}:${{ matrix.version }}
+        run: scripts/check-no-ssh-host-keys "$BUILT_IMAGE"
+
       - name: Check featherless-init image contents
         if: matrix.target == 'featherless-init'
         env:
