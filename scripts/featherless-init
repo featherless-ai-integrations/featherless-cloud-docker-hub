@@ -39,7 +39,11 @@ as_root() {
 }
 
 install_components() {
+  local had_host_keys=false
   command -v apt-get >/dev/null 2>&1 || die "this installer requires Ubuntu or another Debian-based system with apt-get"
+  if compgen -G '/etc/ssh/ssh_host_*_key' >/dev/null; then
+    had_host_keys=true
+  fi
   log "Installing OpenSSH, Python, monitoring, and runtime utilities"
   as_root env DEBIAN_FRONTEND=noninteractive apt-get update
   as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -56,7 +60,12 @@ install_components() {
     as_root uv pip install --system --break-system-packages jupyterlab
   fi
   as_root mkdir -p /run/sshd
-  as_root ssh-keygen -A
+  # Installing openssh-server generates host keys. In an image build they would
+  # be shared by every container, so drop the ones made here; configure_ssh makes
+  # each container's own when SSH starts. A machine's existing keys stay.
+  if [[ "$had_host_keys" == false ]]; then
+    as_root rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+  fi
   if (( EUID == 0 )) && [[ -f /.dockerenv ]]; then rm -rf /var/lib/apt/lists/*; fi
 }
 
